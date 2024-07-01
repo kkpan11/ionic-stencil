@@ -1,5 +1,6 @@
 import type { ConfigFlags } from '../cli/config-flags';
 import type { PrerenderUrlResults, PrintLine } from '../internal';
+import type { BuildCtx, CompilerCtx } from './stencil-private';
 import type { JsonDocs } from './stencil-public-docs';
 
 export * from './stencil-public-docs';
@@ -83,6 +84,14 @@ export interface StencilConfig {
    * Below is an example folder structure containing a webapp's global sass file, named app.css.
    */
   globalStyle?: string;
+
+  /**
+   * Will generate {@link https://nodejs.org/api/packages.html#packages_exports export map} entry points
+   * for each component in the build when `true`.
+   *
+   * @default false
+   */
+  generateExportMaps?: boolean;
 
   /**
    * When the hashFileNames config is set to true, and it is a production build,
@@ -327,6 +336,7 @@ interface ConfigExtrasBase {
    * It is possible to assign data to the actual `<script>` element's `data-opts` property,
    * which then gets passed to Stencil's initial bootstrap. This feature is only required
    * for very special cases and rarely needed. Defaults to `false`.
+   * @deprecated This option has been deprecated and will be removed in a future major version of Stencil.
    */
   scriptDataOpts?: boolean;
 
@@ -931,6 +941,19 @@ export interface SerializeDocumentOptions extends HydrateDocumentOptions {
    * Remove HTML comments. Defaults to `true`.
    */
   removeHtmlComments?: boolean;
+  /**
+   * If set to `false` Stencil will ignore the fact that a component has a `shadow: true`
+   * flag and serializes it as a scoped component. If set to `true` the component will
+   * be rendered within a Declarative Shadow DOM.
+   * @default false
+   */
+  serializeShadowRoot?: boolean;
+  /**
+   * The `fullDocument` flag determines the format of the rendered output. Set it to true to
+   * generate a complete HTML document, or false to render only the component.
+   * @default true
+   */
+  fullDocument?: boolean;
 }
 
 export interface HydrateFactoryOptions extends SerializeDocumentOptions {
@@ -1726,6 +1749,11 @@ export interface RollupInputOptions {
   context?: string;
   moduleContext?: ((id: string) => string) | { [id: string]: string };
   treeshake?: boolean;
+  external?:
+    | (string | RegExp)[]
+    | string
+    | RegExp
+    | ((source: string, importer: string | undefined, isResolved: boolean) => boolean | null | undefined);
 }
 
 export interface RollupOutputOptions {
@@ -2239,8 +2267,17 @@ export interface OutputTargetHydrate extends OutputTargetBase {
 export interface OutputTargetCustom extends OutputTargetBase {
   type: 'custom';
   name: string;
+  /**
+   * Indicate when the output target should be executed.
+   *
+   * - `"onBuildOnly"`: Executed only when `stencil build` is called without `--watch`.
+   * - `"always"`: Executed on every build, including in `watch` mode.
+   *
+   * Defaults to "always".
+   */
+  taskShouldRun?: 'onBuildOnly' | 'always';
   validate?: (config: Config, diagnostics: Diagnostic[]) => void;
-  generator: (config: Config, compilerCtx: any, buildCtx: any, docs: any) => Promise<void>;
+  generator: (config: Config, compilerCtx: CompilerCtx, buildCtx: BuildCtx, docs: JsonDocs) => Promise<void>;
   copy?: CopyTask[];
 }
 
@@ -2632,9 +2669,9 @@ export interface ResolveModuleOptions {
 
 export interface PrerenderStartOptions {
   buildId?: string;
-  hydrateAppFilePath: string;
-  componentGraph: BuildResultsComponentGraph;
-  srcIndexHtmlPath: string;
+  hydrateAppFilePath?: string;
+  componentGraph?: BuildResultsComponentGraph;
+  srcIndexHtmlPath?: string;
 }
 
 export interface PrerenderResults {

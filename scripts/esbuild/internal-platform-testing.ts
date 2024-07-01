@@ -4,7 +4,7 @@ import { join } from 'path';
 
 import { BuildOptions } from '../utils/options';
 import { writePkgJson } from '../utils/write-pkg-json';
-import { externalAlias, getBaseEsbuildOptions, getEsbuildAliases, getEsbuildExternalModules } from './util';
+import { externalAlias, getBaseEsbuildOptions, getEsbuildAliases, getEsbuildExternalModules } from './utils';
 
 /**
  * Get an ESBuild configuration object for the internal testing bundle. This
@@ -33,7 +33,7 @@ export async function getInternalTestingBundle(opts: BuildOptions): Promise<ESBu
     '@platform': inputTestingPlatform,
   };
 
-  const external = [...getEsbuildExternalModules(opts, opts.output.internalDir), '@stencil/core/mock-doc'];
+  const external = getEsbuildExternalModules(opts, opts.output.internalDir);
 
   const internalTestingBuildOptions: ESBuildOptions = {
     ...getBaseEsbuildOptions(),

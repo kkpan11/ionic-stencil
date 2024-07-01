@@ -6,7 +6,7 @@ import { getBanner } from '../utils/banner';
 import { bundleDts } from '../utils/bundle-dts';
 import { BuildOptions } from '../utils/options';
 import { writePkgJson } from '../utils/write-pkg-json';
-import { externalAlias, getBaseEsbuildOptions, getEsbuildAliases, getEsbuildExternalModules } from './util';
+import { externalAlias, getBaseEsbuildOptions, getEsbuildAliases, getEsbuildExternalModules } from './utils';
 
 /**
  * Create objects containing ESbuild options for the two bundles comprising
@@ -35,7 +35,7 @@ export async function getInternalPlatformHydrateBundles(opts: BuildOptions): Pro
 
   const hydratePlatformInput = join(hydrateSrcDir, 'platform', 'index.js');
 
-  const external = [...getEsbuildExternalModules(opts, outputInternalHydrateDir), '@stencil/core/mock-doc'];
+  const external = getEsbuildExternalModules(opts, outputInternalHydrateDir);
 
   const internalHydrateAliases = getEsbuildAliases();
   internalHydrateAliases['@platform'] = hydratePlatformInput;
@@ -54,8 +54,6 @@ export async function getInternalPlatformHydrateBundles(opts: BuildOptions): Pro
     plugins: [
       externalAlias('@utils/shadow-css', '../client/shadow-css.js'),
       externalAlias('@app-data', '@stencil/core/internal/app-data'),
-      // this needs to be externalized and also pointed at the esm version
-      externalAlias('@stencil/core/mock-doc', '../../mock-doc/index.js'),
     ],
   };
 

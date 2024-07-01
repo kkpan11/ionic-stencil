@@ -151,7 +151,7 @@ describe('element', () => {
 
     (elm as HTMLMetaElement).content = 'value';
     expect((elm as HTMLMetaElement).content).toBe('value');
-    expect(elm).toEqualHtml(`<meta content="value" id="test">`);
+    expect(elm).toEqualHtml(`<meta id="test" content="value">`);
 
     clonedWin.document.title = 'Hello Title!';
     const titleElm = clonedWin.document.head.querySelector('title');
@@ -513,5 +513,12 @@ describe('element', () => {
     expect(doc.createElement('datalist').localName).toBe('datalist');
     expect(doc.createElement('svg').localName).toBe('svg');
     expect((document.childNodes[1] as any).localName).toBe('html');
+  });
+
+  it('has provides a canvas object with getContext', () => {
+    const canvas = doc.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    expect(ctx).toBeDefined();
+    expect(ctx.toDataURL()).toBe('data:,');
   });
 });

@@ -1,4 +1,13 @@
-import { flatOne, isOutputTargetDocsJson, join, normalizePath, relative, sortBy, unique } from '@utils';
+import {
+  DEFAULT_STYLE_MODE,
+  flatOne,
+  isOutputTargetDocsJson,
+  join,
+  normalizePath,
+  relative,
+  sortBy,
+  unique,
+} from '@utils';
 import { basename, dirname } from 'path';
 
 import type * as d from '../../declarations';
@@ -305,16 +314,26 @@ const getDocsEvents = (events: d.ComponentCompilerEvent[]): d.JsonDocsEvent[] =>
     }));
 };
 
-const getDocsStyles = (cmpMeta: d.ComponentCompilerMeta): d.JsonDocsStyle[] => {
+/**
+ * Transforms the {@link d.CompilerStyleDoc} metadata for a component into a {@link d.JsonDocsStyle}, providing sensible
+ * defaults where needed.
+ * @param cmpMeta the metadata for a single Stencil component, which contains the compiler style metadata
+ * @returns a new series containing a {@link d.JsonDocsStyle} entry for each {@link d.CompilerStyleDoc} entry.
+ */
+export const getDocsStyles = (cmpMeta: d.ComponentCompilerMeta): d.JsonDocsStyle[] => {
   if (!cmpMeta.styleDocs) {
     return [];
   }
 
-  return sortBy(cmpMeta.styleDocs, (o) => o.name.toLowerCase()).map((styleDoc) => {
+  return sortBy(
+    cmpMeta.styleDocs,
+    (compilerStyleDoc) => `${compilerStyleDoc.name.toLowerCase()},${compilerStyleDoc.mode.toLowerCase()}}`,
+  ).map((compilerStyleDoc) => {
     return {
-      name: styleDoc.name,
-      annotation: styleDoc.annotation || '',
-      docs: styleDoc.docs || '',
+      name: compilerStyleDoc.name,
+      annotation: compilerStyleDoc.annotation || '',
+      docs: compilerStyleDoc.docs || '',
+      mode: compilerStyleDoc.mode && compilerStyleDoc.mode !== DEFAULT_STYLE_MODE ? compilerStyleDoc.mode : undefined,
     };
   });
 };

@@ -1,11 +1,10 @@
 import { BUILD } from '@app-data';
 import { getHostRef, plt, supportsShadow } from '@platform';
-import { NODE_TYPES } from '@stencil/core/mock-doc';
-import { CMP_FLAGS, HOST_FLAGS } from '@utils';
+import { CMP_FLAGS, HOST_FLAGS, NODE_TYPES } from '@utils/constants';
 
 import type * as d from '../declarations';
 import { PLATFORM_FLAGS } from './runtime-constants';
-import { updateFallbackSlotVisibility } from './vdom/vdom-render';
+import { insertBefore, updateFallbackSlotVisibility } from './vdom/vdom-render';
 
 export const patchPseudoShadowDom = (
   hostElementPrototype: HTMLElement,
@@ -48,6 +47,7 @@ export const patchCloneNode = (HostElementPrototype: HTMLElement) => {
         's-nr',
         's-si',
         's-rf',
+        's-scs',
       ];
 
       for (; i < srcNode.childNodes.length; i++) {
@@ -85,7 +85,7 @@ export const patchSlotAppendChild = (HostElementPrototype: any) => {
     if (slotNode) {
       const slotChildNodes = getHostSlotChildNodes(slotNode, slotName);
       const appendAfter = slotChildNodes[slotChildNodes.length - 1];
-      const insertedNode = appendAfter.parentNode.insertBefore(newChild, appendAfter.nextSibling);
+      const insertedNode = insertBefore(appendAfter.parentNode, newChild, appendAfter.nextSibling);
 
       // Check if there is fallback content that should be hidden
       updateFallbackSlotVisibility(this);
@@ -150,7 +150,7 @@ export const patchSlotPrepend = (HostElementPrototype: HTMLElement) => {
 
         const slotChildNodes = getHostSlotChildNodes(slotNode, slotName);
         const appendAfter = slotChildNodes[0];
-        return appendAfter.parentNode.insertBefore(newChild, appendAfter.nextSibling);
+        return insertBefore(appendAfter.parentNode, newChild, appendAfter.nextSibling);
       }
 
       if (newChild.nodeType === 1 && !!newChild.getAttribute('slot')) {
@@ -310,7 +310,7 @@ export const patchTextContent = (hostElementPrototype: HTMLElement): void => {
           if (node['s-sn'] === '') {
             const textNode = this.ownerDocument.createTextNode(value);
             textNode['s-sn'] = '';
-            node.parentElement.insertBefore(textNode, node.nextSibling);
+            insertBefore(node.parentElement, textNode, node.nextSibling);
           } else {
             node.remove();
           }
@@ -353,7 +353,7 @@ export const patchTextContent = (hostElementPrototype: HTMLElement): void => {
           this.__textContent = value;
           const contentRefElm = this['s-cr'];
           if (contentRefElm) {
-            this.insertBefore(contentRefElm, this.firstChild);
+            insertBefore(this, contentRefElm, this.firstChild);
           }
         }
       },

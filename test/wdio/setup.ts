@@ -12,7 +12,10 @@ declare global {
 const testRequiresManualSetup =
   window.__wdioSpec__.includes('custom-elements-output-tag-class-different') ||
   window.__wdioSpec__.includes('custom-elements-delegates-focus') ||
-  window.__wdioSpec__.includes('custom-elements-output');
+  window.__wdioSpec__.includes('custom-elements-output') ||
+  window.__wdioSpec__.includes('global-script') ||
+  window.__wdioSpec__.endsWith('custom-tag-name.test.tsx') ||
+  window.__wdioSpec__.endsWith('page-list.test.ts');
 
 /**
  * setup all components defined in tests except for those where we want ot manually setup

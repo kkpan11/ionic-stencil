@@ -10,6 +10,7 @@ import {
   SLOT_NODE_ID,
   TEXT_NODE_ID,
 } from '../runtime-constants';
+import { insertBefore } from './vdom-render';
 
 /**
  * Updates the DOM generated on the server with annotations such as node attributes and
@@ -58,7 +59,7 @@ export const insertVdomAnnotations = (doc: Document, staticComponents: string[])
             }
             const commentBeforeTextNode = doc.createComment(childId);
             commentBeforeTextNode.nodeValue = `${TEXT_NODE_ID}.${childId}`;
-            nodeRef.parentNode?.insertBefore(commentBeforeTextNode, nodeRef);
+            insertBefore(nodeRef.parentNode, commentBeforeTextNode, nodeRef);
           }
         }
 
@@ -110,7 +111,12 @@ const parseVNodeAnnotations = (
   }
 
   if (node.nodeType === NODE_TYPE.ElementNode) {
-    node.childNodes.forEach((childNode) => {
+    /**
+     * we need to insert the vnode annotations on the host element children as well
+     * as on the children from its shadowRoot if there is one
+     */
+    const childNodes = [...Array.from(node.childNodes), ...Array.from(node.shadowRoot?.childNodes || [])];
+    childNodes.forEach((childNode) => {
       const hostRef = getHostRef(childNode);
       if (hostRef != null && !docData.staticComponents.has(childNode.nodeName.toLowerCase())) {
         const cmpData: CmpData = {
@@ -220,7 +226,7 @@ const insertChildVNodeAnnotations = (
       const textNodeId = `${TEXT_NODE_ID}.${childId}`;
 
       const commentBeforeTextNode = doc.createComment(textNodeId);
-      parentNode?.insertBefore(commentBeforeTextNode, childElm);
+      insertBefore(parentNode, commentBeforeTextNode, childElm);
     }
   } else if (childElm.nodeType === NODE_TYPE.CommentNode) {
     if (childElm['s-sr']) {

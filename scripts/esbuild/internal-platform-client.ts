@@ -7,7 +7,7 @@ import { join } from 'path';
 import { getBanner } from '../utils/banner';
 import { BuildOptions, createReplaceData } from '../utils/options';
 import { writePkgJson } from '../utils/write-pkg-json';
-import { externalAlias, getBaseEsbuildOptions, getEsbuildAliases, getEsbuildExternalModules } from './util';
+import { externalAlias, getBaseEsbuildOptions, getEsbuildAliases, getEsbuildExternalModules } from './utils';
 
 /**
  * Create objects containing ESbuild options for the two bundles which need to
@@ -17,7 +17,7 @@ import { externalAlias, getBaseEsbuildOptions, getEsbuildAliases, getEsbuildExte
  * @param opts build options
  * @returns an array of ESBuild option objects
  */
-export async function getInternalClientBundle(opts: BuildOptions): Promise<ESBuildOptions[]> {
+export async function getInternalClientBundles(opts: BuildOptions): Promise<ESBuildOptions[]> {
   const inputClientDir = join(opts.srcDir, 'client');
   const outputInternalClientDir = join(opts.output.internalDir, 'client');
   const outputInternalClientPolyfillsDir = join(outputInternalClientDir, 'polyfills');
@@ -32,7 +32,9 @@ export async function getInternalClientBundle(opts: BuildOptions): Promise<ESBui
     name: '@stencil/core/internal/client',
     description:
       'Stencil internal client platform to be imported by the Stencil Compiler and internal runtime. Breaking changes can and will happen at any time.',
-    main: 'index.js',
+    exports: './index.js',
+    main: './index.js',
+    type: 'module',
     sideEffects: false,
   });
 
@@ -59,9 +61,6 @@ export async function getInternalClientBundle(opts: BuildOptions): Promise<ESBui
       replace(createReplaceData(opts)),
       externalAlias('@app-data', '@stencil/core/internal/app-data'),
       externalAlias('@utils/shadow-css', './shadow-css.js'),
-      // we want to get the esm, not the cjs, since we're creating an esm
-      // bundle here
-      externalAlias('@stencil/core/mock-doc', '../../mock-doc/index.js'),
       findAndReplaceLoadModule(),
     ],
   };

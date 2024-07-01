@@ -12,6 +12,12 @@ export const config: Config = {
     {
       type: 'dist-custom-elements',
       dir: 'test-components',
+      customElementsExportBehavior: 'bundle',
+      isPrimaryPackageOutputTarget: true,
+    },
+    {
+      type: 'dist-hydrate-script',
+      dir: 'hydrate',
     },
   ],
   plugins: [sass()],
