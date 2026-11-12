@@ -22,12 +22,11 @@ export async function compareScreenshot(
   testPath: string,
   pixelmatchThreshold: number,
 ) {
-  const currentImageHash = createHash('md5').update(currentScreenshotBuf).digest('hex');
+  const currentImageHash = createHash('sha256').update(currentScreenshotBuf).digest('hex');
   const currentImageName = `${currentImageHash}.png`;
   const currentImagePath = join(screenshotBuildData.imagesDir, currentImageName);
 
   await writeScreenshotImage(currentImagePath, currentScreenshotBuf);
-  currentScreenshotBuf = null;
 
   if (testPath) {
     testPath = normalizePath(relative(screenshotBuildData.rootDir, testPath));
@@ -179,7 +178,7 @@ async function getMismatchedPixels(
         reject(err);
       });
 
-      pixelMatchProcess.stderr.on('data', (data) => {
+      pixelMatchProcess.stderr?.on('data', (data) => {
         error = data.toString();
       });
 

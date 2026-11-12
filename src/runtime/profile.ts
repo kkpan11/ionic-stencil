@@ -1,6 +1,7 @@
 import { BUILD } from '@app-data';
 import { getHostRef, win } from '@platform';
-import { HOST_FLAGS } from '@utils';
+
+import { HOST_FLAGS } from '../utils/constants';
 
 let i = 0;
 
@@ -58,11 +59,13 @@ const inspect = (ref: any) => {
       needsRerender: !!(flags & HOST_FLAGS.needsRerender),
     },
     instanceValues: hostRef.$instanceValues$,
+    serializerValues: hostRef.$serializerValues$,
     ancestorComponent: hostRef.$ancestorComponent$,
     hostElement,
     lazyInstance: hostRef.$lazyInstance$,
     vnode: hostRef.$vnode$,
     modeName: hostRef.$modeName$,
+    fetchedCbList: hostRef.$fetchedCbList$,
     onReadyPromise: hostRef.$onReadyPromise$,
     onReadyResolve: hostRef.$onReadyResolve$,
     onInstancePromise: hostRef.$onInstancePromise$,

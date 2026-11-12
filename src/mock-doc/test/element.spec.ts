@@ -151,7 +151,7 @@ describe('element', () => {
 
     (elm as HTMLMetaElement).content = 'value';
     expect((elm as HTMLMetaElement).content).toBe('value');
-    expect(elm).toEqualHtml(`<meta content="value" id="test">`);
+    expect(elm).toEqualHtml(`<meta id="test" content="value">`);
 
     clonedWin.document.title = 'Hello Title!';
     const titleElm = clonedWin.document.head.querySelector('title');
@@ -309,6 +309,18 @@ describe('element', () => {
     });
   });
 
+  describe('hidden', () => {
+    it('reflects booleans and until-found to the attribute', () => {
+      const elm = doc.createElement('div');
+      elm.hidden = true;
+      expect(elm.getAttribute('hidden')).toBe('');
+      elm.hidden = 'until-found';
+      expect(elm.getAttribute('hidden')).toBe('until-found');
+      elm.hidden = false;
+      expect(elm.hasAttribute('hidden')).toBe(false);
+    });
+  });
+
   describe('append', () => {
     it('nothing', () => {
       const elm = doc.createElement('div') as Element;
@@ -374,6 +386,15 @@ describe('element', () => {
       expect((elm.childNodes[1] as Text).data).toEqual('12');
       expect(elm.childNodes[2]).toEqual(child);
       expect((elm.childNodes[3] as Text).data).toEqual('original');
+    });
+
+    it('before null', () => {
+      const elm = doc.createElement('div') as Element;
+      const child = doc.createElement('div') as Element;
+      elm.prepend(child);
+
+      expect(elm.childNodes.length).toEqual(1);
+      expect(elm.childNodes[0]).toEqual(child);
     });
   });
 
@@ -513,5 +534,223 @@ describe('element', () => {
     expect(doc.createElement('datalist').localName).toBe('datalist');
     expect(doc.createElement('svg').localName).toBe('svg');
     expect((document.childNodes[1] as any).localName).toBe('html');
+  });
+
+  it('has provides a canvas object with getContext', () => {
+    const canvas = doc.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    expect(ctx).toBeDefined();
+    expect(ctx.toDataURL()).toBe('data:,');
+  });
+
+  describe('slot', () => {
+    it('returns no nodes via `assignedNodes` / `assignedElements` when not within a custom element', () => {
+      const slot = doc.createElement('slot');
+      slot.innerHTML = 'invisible <div>Something</div> <!-- not here -->';
+      expect(slot.assignedNodes().length).toEqual(0);
+      expect(slot.assignedElements().length).toEqual(0);
+    });
+
+    it('returns correct nodes with `assignedNodes`', () => {
+      const elm = doc.createElement('cmp-a');
+      const shadowRoot = elm.attachShadow({ mode: 'open' });
+      const slot = doc.createElement('slot');
+      shadowRoot.appendChild(slot);
+      slot.innerHTML = '<slot name="nested-slot">Fallback content</slot>';
+
+      elm.innerHTML = `
+        text node 
+        <div>light dom</div>
+        <!-- comment node -->
+        <div slot="nested-slot">nested slot</div>
+      `;
+
+      expect(slot.assignedNodes().length).toEqual(5);
+      expect(slot.assignedNodes()[0].textContent.trim()).toEqual('text node');
+      expect(slot.assignedNodes()[1].textContent.trim()).toEqual('light dom');
+      expect(slot.assignedNodes()[3].textContent.trim()).toEqual('comment node');
+      expect(slot.assignedNodes()[4].textContent.trim()).toEqual('');
+      expect(slot.assignedNodes({ flatten: true }).length).toEqual(5);
+
+      elm.innerHTML = '<div slot="nested-slot">nested slot</div>';
+
+      expect(slot.assignedNodes().length).toEqual(0);
+      expect(slot.assignedNodes({ flatten: true }).length).toEqual(1);
+      expect(slot.assignedNodes({ flatten: true })[0].textContent.trim()).toEqual('nested slot');
+
+      elm.innerHTML = 'text node <div slot="nested-slot">nested slot</div>';
+
+      expect(slot.assignedNodes().length).toEqual(1);
+      expect(slot.assignedNodes({ flatten: true }).length).toEqual(1);
+      expect(slot.assignedNodes()[0].textContent.trim()).toEqual('text node');
+
+      elm.innerHTML = '';
+      expect(slot.assignedNodes().length).toEqual(0);
+      expect(slot.assignedNodes({ flatten: true }).length).toEqual(1);
+      expect(slot.assignedNodes({ flatten: true })[0].textContent.trim()).toEqual('Fallback content');
+    });
+
+    it('returns correct elements with `assignedElements`', () => {
+      const elm = doc.createElement('cmp-a');
+      const shadowRoot = elm.attachShadow({ mode: 'open' });
+      const slot = doc.createElement('slot');
+      shadowRoot.appendChild(slot);
+      slot.innerHTML = '<slot name="nested-slot"><div>Fallback content</div></slot>';
+
+      elm.innerHTML = `
+        text node 
+        <div>light dom</div>
+        <!-- comment node -->
+        <div slot="nested-slot">nested slot</div>
+      `;
+
+      expect(slot.assignedElements().length).toEqual(1);
+      expect(slot.assignedElements()[0].textContent.trim()).toEqual('light dom');
+      expect(slot.assignedElements({ flatten: true }).length).toEqual(1);
+
+      elm.innerHTML = '<div slot="nested-slot">nested slot</div>';
+
+      expect(slot.assignedElements().length).toEqual(0);
+      expect(slot.assignedElements({ flatten: true }).length).toEqual(1);
+      expect(slot.assignedElements({ flatten: true })[0].textContent.trim()).toEqual('nested slot');
+
+      elm.innerHTML = 'text node <div slot="nested-slot">nested slot</div>';
+
+      expect(slot.assignedElements().length).toEqual(0);
+      expect(slot.assignedElements({ flatten: true }).length).toEqual(1);
+      expect(slot.assignedElements({ flatten: true })[0].textContent.trim()).toEqual('nested slot');
+
+      elm.innerHTML = '';
+      expect(slot.assignedElements().length).toEqual(0);
+      expect(slot.assignedElements({ flatten: true }).length).toEqual(1);
+      expect(slot.assignedElements({ flatten: true })[0].textContent.trim()).toEqual('Fallback content');
+    });
+  });
+
+  describe('label', () => {
+    it('htmlFor getter/setter reflects the for attribute', () => {
+      const label = doc.createElement('label');
+      expect(label.htmlFor).toBe('');
+
+      label.htmlFor = 'my-input';
+      expect(label.htmlFor).toBe('my-input');
+      expect(label.getAttribute('for')).toBe('my-input');
+
+      label.setAttribute('for', 'other-input');
+      expect(label.htmlFor).toBe('other-input');
+    });
+
+    it('control returns element referenced by for attribute', () => {
+      const label = doc.createElement('label');
+      const input = doc.createElement('input');
+      input.id = 'my-input';
+      label.htmlFor = 'my-input';
+
+      doc.body.appendChild(label);
+      doc.body.appendChild(input);
+
+      expect(label.control).toBe(input);
+    });
+
+    it('control returns null when for attribute references non-existent element', () => {
+      const label = doc.createElement('label');
+      label.htmlFor = 'non-existent';
+      doc.body.appendChild(label);
+
+      expect(label.control).toBe(null);
+    });
+
+    it('control returns first labelable descendant when no for attribute', () => {
+      const label = doc.createElement('label');
+      const span = doc.createElement('span');
+      const input = doc.createElement('input');
+
+      label.appendChild(span);
+      span.appendChild(input);
+      doc.body.appendChild(label);
+
+      expect(label.control).toBe(input);
+    });
+
+    it('control returns null when no for attribute and no labelable descendants', () => {
+      const label = doc.createElement('label');
+      const span = doc.createElement('span');
+      label.appendChild(span);
+      doc.body.appendChild(label);
+
+      expect(label.control).toBe(null);
+    });
+  });
+
+  describe('labels property', () => {
+    it('input.labels returns labels with matching for attribute', () => {
+      const label1 = doc.createElement('label');
+      const label2 = doc.createElement('label');
+      const input = doc.createElement('input');
+
+      input.id = 'my-input';
+      label1.htmlFor = 'my-input';
+      label2.htmlFor = 'other-input';
+
+      doc.body.appendChild(label1);
+      doc.body.appendChild(label2);
+      doc.body.appendChild(input);
+
+      const labels = input.labels;
+      expect(labels.length).toBe(1);
+      expect(labels[0]).toBe(label1);
+    });
+
+    it('input.labels returns ancestor label elements', () => {
+      const label = doc.createElement('label');
+      const input = doc.createElement('input');
+
+      label.appendChild(input);
+      doc.body.appendChild(label);
+
+      const labels = input.labels;
+      expect(labels.length).toBe(1);
+      expect(labels[0]).toBe(label);
+    });
+
+    it('input.labels returns both for-referenced and ancestor labels', () => {
+      const label1 = doc.createElement('label');
+      const label2 = doc.createElement('label');
+      const input = doc.createElement('input');
+
+      input.id = 'my-input';
+      label1.htmlFor = 'my-input';
+      label2.appendChild(input);
+
+      doc.body.appendChild(label1);
+      doc.body.appendChild(label2);
+
+      const labels = input.labels;
+      expect(labels.length).toBe(2);
+      expect(labels).toContain(label1);
+      expect(labels).toContain(label2);
+    });
+
+    it('input.labels returns empty array when no associated labels', () => {
+      const input = doc.createElement('input');
+      doc.body.appendChild(input);
+
+      expect(input.labels.length).toBe(0);
+    });
+
+    it('button.labels returns associated labels', () => {
+      const label = doc.createElement('label');
+      const button = doc.createElement('button');
+
+      button.id = 'my-button';
+      label.htmlFor = 'my-button';
+
+      doc.body.appendChild(label);
+      doc.body.appendChild(button);
+
+      const labels = button.labels;
+      expect(labels.length).toBe(1);
+      expect(labels[0]).toBe(label);
+    });
   });
 });

@@ -4,6 +4,7 @@ import {
   generatePreamble,
   getSourceMappingUrlForEndOfFile,
   hasError,
+  isBoolean,
   isOutputTargetDistCustomElements,
   isString,
   join,
@@ -23,6 +24,8 @@ import { removeCollectionImports } from '../../transformers/remove-collection-im
 import { rewriteAliasedSourceFileImportPaths } from '../../transformers/rewrite-aliased-paths';
 import { updateStencilCoreImports } from '../../transformers/update-stencil-core-import';
 import { getCustomElementsBuildConditionals } from './custom-elements-build-conditionals';
+import { generateLoaderModule } from './generate-loader-module';
+import { addTagTransform } from '../../transformers/add-tag-transform';
 
 /**
  * Main output target function for `dist-custom-elements`. This function just
@@ -76,7 +79,13 @@ export const getBundleOptions = (
   id: 'customElements',
   platform: 'client',
   conditionals: getCustomElementsBuildConditionals(config, buildCtx.components),
-  customBeforeTransformers: getCustomBeforeTransformers(config, compilerCtx, buildCtx.components, outputTarget),
+  customBeforeTransformers: getCustomBeforeTransformers(
+    config,
+    compilerCtx,
+    buildCtx.components,
+    outputTarget,
+    buildCtx,
+  ),
   externalRuntime: !!outputTarget.externalRuntime,
   inlineWorkers: true,
   inputs: {
@@ -123,7 +132,6 @@ export const bundleCustomElements = async (
         chunkFileNames: outputTarget.externalRuntime || !config.hashFileNames ? '[name].js' : 'p-[hash].js',
         entryFileNames: '[name].js',
         hoistTransitiveImports: false,
-        preferConst: true,
       });
 
       // the output target should have been validated at this point - as a result, we expect this field
@@ -141,7 +149,7 @@ export const bundleCustomElements = async (
         return;
       }
 
-      const minify = outputTarget.externalRuntime || outputTarget.minify !== true ? false : config.minifyJs;
+      const minify = isBoolean(outputTarget.minify) ? outputTarget.minify : config.minifyJs;
       const files = rollupOutput.output.map(async (bundle) => {
         if (bundle.type === 'chunk') {
           let code = bundle.code;
@@ -234,6 +242,15 @@ export const addCustomElementInputs = (
 
   // Generate the contents of the entry file to be created by the bundler
   bundleOpts.loader!['\0core'] = generateEntryPoint(outputTarget, indexImports, indexExports, exportNames);
+
+  // Generate auto-loader module if enabled
+  if (outputTarget.autoLoader) {
+    const loaderFileName =
+      typeof outputTarget.autoLoader === 'object' ? outputTarget.autoLoader.fileName || 'loader' : 'loader';
+
+    bundleOpts.inputs[loaderFileName] = '\0loader';
+    bundleOpts.loader!['\0loader'] = generateLoaderModule(components, outputTarget);
+  }
 };
 
 /**
@@ -256,7 +273,7 @@ export const generateEntryPoint = (
 
   // Exports that are always present
   exports.push(
-    `export { getAssetPath, setAssetPath, setNonce, setPlatformOptions } from '${STENCIL_INTERNAL_CLIENT_ID}';`,
+    `export { getAssetPath, setAssetPath, setNonce, setPlatformOptions, render } from '${STENCIL_INTERNAL_CLIENT_ID}';`,
     `export * from '${USER_INDEX_ENTRY_ID}';`,
   );
 
@@ -268,6 +285,7 @@ export const generateEntryPoint = (
 
   // Content related to the `bundle` export behavior
   if (outputTarget.customElementsExportBehavior === 'bundle') {
+    imports.push(`import { transformTag } from '${STENCIL_INTERNAL_CLIENT_ID}';`);
     imports.push(...cmpImports);
     body.push(
       'export const defineCustomElements = (opts) => {',
@@ -275,8 +293,8 @@ export const generateEntryPoint = (
       '        [',
       ...cmpNames.map((cmp) => `            ${cmp},`),
       '        ].forEach(cmp => {',
-      '            if (!customElements.get(cmp.is)) {',
-      '                customElements.define(cmp.is, cmp, opts);',
+      '            if (!customElements.get(transformTag(cmp.is))) {',
+      '                customElements.define(transformTag(cmp.is), cmp, opts);',
       '            }',
       '        });',
       '    }',
@@ -320,6 +338,7 @@ const getCustomBeforeTransformers = (
   compilerCtx: d.CompilerCtx,
   components: d.ComponentCompilerMeta[],
   outputTarget: d.OutputTargetDistCustomElements,
+  buildCtx: d.BuildCtx,
 ): ts.TransformerFactory<ts.SourceFile>[] => {
   const transformOpts: d.TransformOptions = {
     coreImportPath: STENCIL_INTERNAL_CLIENT_ID,
@@ -339,8 +358,12 @@ const getCustomBeforeTransformers = (
     customBeforeTransformers.push(rewriteAliasedSourceFileImportPaths);
   }
 
+  if (buildCtx.config.extras.additionalTagTransformers) {
+    customBeforeTransformers.push(addTagTransform(compilerCtx, buildCtx));
+  }
+
   customBeforeTransformers.push(
-    nativeComponentTransform(compilerCtx, transformOpts),
+    nativeComponentTransform(compilerCtx, transformOpts, buildCtx),
     proxyCustomElement(compilerCtx, transformOpts),
     removeCollectionImports(compilerCtx),
   );

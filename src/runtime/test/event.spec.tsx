@@ -1,4 +1,4 @@
-import { Component, Event, EventEmitter, Listen, Method, State } from '@stencil/core';
+import { Component, Element, Event, EventEmitter, h, Listen, Method, resolveVar, State } from '@stencil/core';
 import { newSpecPage } from '@stencil/core/testing';
 
 describe('event', () => {
@@ -313,6 +313,161 @@ describe('event', () => {
 
       expect(root).toEqualHtml(`
         <cmp-a>99 - Yes</cmp-a>
+      `);
+    });
+  });
+
+  it('should prevent infinite recursion when blur event handler calls blur', async () => {
+    @Component({ tag: 'cmp-blur-recursion' })
+    class CmpBlurRecursion {
+      @Element() el!: HTMLElement;
+
+      @State() blurCount = 0;
+      @State() inputValue = '';
+
+      @Listen('blur')
+      handleBlur() {
+        this.blurCount++;
+        // This simulates the scenario where a blur handler
+        // tries to blur an input element
+        const input = this.el.querySelector('input');
+        if (input && this.blurCount < 5) {
+          // Only try to blur if we haven't reached our limit
+          // This prevents the test from running forever if the fix doesn't work
+          input.blur();
+        }
+      }
+
+      @Method()
+      async triggerBlur() {
+        const input = this.el.querySelector('input');
+        if (input) {
+          input.blur();
+        }
+      }
+
+      render() {
+        return h(
+          'div',
+          null,
+          h('input', {
+            value: this.inputValue,
+            onInput: (e: any) => (this.inputValue = (e.target as HTMLInputElement).value),
+          }),
+          h('div', null, `Blur count: ${this.blurCount}`),
+        );
+      }
+    }
+
+    const { root, waitForChanges } = await newSpecPage({
+      components: [CmpBlurRecursion],
+      html: `<cmp-blur-recursion></cmp-blur-recursion>`,
+    });
+
+    expect(root).toEqualHtml(`
+      <cmp-blur-recursion>
+        <div>
+          <input value="">
+          <div>Blur count: 0</div>
+        </div>
+      </cmp-blur-recursion>
+    `);
+
+    // Trigger the blur event that should NOT cause infinite recursion
+    await root.triggerBlur();
+    await waitForChanges();
+
+    // The blur count should be 1, not cause infinite recursion
+    expect(root).toEqualHtml(`
+      <cmp-blur-recursion>
+        <div>
+          <input value="">
+          <div>Blur count: 1</div>
+        </div>
+      </cmp-blur-recursion>
+    `);
+  });
+
+  describe('resolveVar', () => {
+    it('should emit event with resolved const variable name', async () => {
+      const MY_EVENT = 'myEvent';
+
+      @Component({ tag: 'cmp-a' })
+      class CmpA {
+        @Event({ eventName: resolveVar(MY_EVENT) }) myEvent: EventEmitter;
+        @State() counter = 0;
+
+        @Listen(resolveVar(MY_EVENT))
+        onMyEvent() {
+          this.counter++;
+        }
+
+        @Method()
+        emitEvent() {
+          this.myEvent.emit();
+        }
+
+        render() {
+          return `${this.counter}`;
+        }
+      }
+
+      const page = await newSpecPage({
+        components: [CmpA],
+        html: `<cmp-a></cmp-a>`,
+      });
+
+      expect(page.root).toEqualHtml(`
+        <cmp-a>0</cmp-a>
+      `);
+
+      await page.root.emitEvent();
+      await page.waitForChanges();
+
+      expect(page.root).toEqualHtml(`
+        <cmp-a>1</cmp-a>
+      `);
+    });
+
+    it('should emit event with resolved object property name', async () => {
+      const EVENTS = {
+        MY_EVENT: 'myEvent',
+      } as const;
+
+      @Component({ tag: 'cmp-a' })
+      class CmpA {
+        @Event({ eventName: resolveVar(EVENTS.MY_EVENT) }) myEvent: EventEmitter;
+        @State() counter = 0;
+
+        @Listen(resolveVar(EVENTS.MY_EVENT))
+        onMyEvent() {
+          this.counter++;
+        }
+
+        @Method()
+        emitEvent() {
+          this.myEvent.emit();
+        }
+
+        render() {
+          return `${this.counter}`;
+        }
+      }
+
+      const page = await newSpecPage({
+        components: [CmpA],
+        html: `<cmp-a></cmp-a>`,
+      });
+
+      expect(page.root).toEqualHtml(`
+        <cmp-a>0</cmp-a>
+      `);
+
+      await page.root.emitEvent();
+      await page.waitForChanges();
+
+      expect(page.root).toEqualHtml(`
+        <cmp-a>1</cmp-a>
       `);
     });
   });

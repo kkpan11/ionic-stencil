@@ -4,7 +4,7 @@ import ts from 'typescript';
 
 import type * as d from '../../declarations';
 import { getScopeId } from '../style/scope-css';
-import { createStaticGetter, getExternalStyles } from './transform-utils';
+import { addTagTransformToCssTsAST, createStaticGetter, getExternalStyles } from './transform-utils';
 
 /**
  * Adds static "style" getter within the class
@@ -16,14 +16,13 @@ import { createStaticGetter, getExternalStyles } from './transform-utils';
  * @param classMembers a class to existing members of a class. **this parameter will be mutated** rather than returning
  * a cloned version
  * @param cmp the metadata associated with the component being evaluated
- * @param commentOriginalSelector if `true`, add a comment with the original CSS selector to the style.
  */
 export const addStaticStyleGetterWithinClass = (
   classMembers: ts.ClassElement[],
   cmp: d.ComponentCompilerMeta,
-  commentOriginalSelector: boolean,
+  buildCtx: d.BuildCtx,
 ): void => {
-  const styleLiteral = getStyleLiteral(cmp, commentOriginalSelector);
+  const styleLiteral = getStyleLiteral(cmp, buildCtx);
   if (styleLiteral) {
     classMembers.push(createStaticGetter('style', styleLiteral));
   }
@@ -40,8 +39,12 @@ export const addStaticStyleGetterWithinClass = (
  * @param styleStatements a list of statements containing style assignments to a class
  * @param cmp the metadata associated with the component being evaluated
  */
-export const addStaticStylePropertyToClass = (styleStatements: ts.Statement[], cmp: d.ComponentCompilerMeta): void => {
-  const styleLiteral = getStyleLiteral(cmp, false);
+export const addStaticStylePropertyToClass = (
+  styleStatements: ts.Statement[],
+  cmp: d.ComponentCompilerMeta,
+  buildCtx: d.BuildCtx,
+): void => {
+  const styleLiteral = getStyleLiteral(cmp, buildCtx);
   if (styleLiteral) {
     const statement = ts.factory.createExpressionStatement(
       ts.factory.createAssignment(
@@ -53,24 +56,20 @@ export const addStaticStylePropertyToClass = (styleStatements: ts.Statement[], c
   }
 };
 
-const getStyleLiteral = (cmp: d.ComponentCompilerMeta, commentOriginalSelector: boolean) => {
+const getStyleLiteral = (cmp: d.ComponentCompilerMeta, buildCtx: d.BuildCtx) => {
   if (Array.isArray(cmp.styles) && cmp.styles.length > 0) {
     if (cmp.styles.length > 1 || (cmp.styles.length === 1 && cmp.styles[0].modeName !== DEFAULT_STYLE_MODE)) {
       // multiple style modes
-      return getMultipleModeStyle(cmp, cmp.styles, commentOriginalSelector);
+      return getMultipleModeStyle(cmp, cmp.styles, buildCtx);
     } else {
       // single style
-      return getSingleStyle(cmp, cmp.styles[0], commentOriginalSelector);
+      return getSingleStyle(cmp, cmp.styles[0], buildCtx);
     }
   }
   return null;
 };
 
-const getMultipleModeStyle = (
-  cmp: d.ComponentCompilerMeta,
-  styles: d.StyleCompiler[],
-  commentOriginalSelector: boolean,
-) => {
+const getMultipleModeStyle = (cmp: d.ComponentCompilerMeta, styles: d.StyleCompiler[], buildCtx: d.BuildCtx) => {
   const styleModes: ts.ObjectLiteralElementLike[] = [];
 
   styles.forEach((style) => {
@@ -83,7 +82,7 @@ const getMultipleModeStyle = (
     if (typeof style.styleStr === 'string') {
       // inline the style string
       // static get style() { return { ios: "string" }; }
-      const styleLiteral = createStyleLiteral(cmp, style, commentOriginalSelector);
+      const styleLiteral = createStyleLiteral(cmp, style, buildCtx);
       const propStr = ts.factory.createPropertyAssignment(style.modeName, styleLiteral);
       styleModes.push(propStr);
     } else if (Array.isArray(style.externalStyles) && style.externalStyles.length > 0) {
@@ -106,7 +105,7 @@ const getMultipleModeStyle = (
   return ts.factory.createObjectLiteralExpression(styleModes, true);
 };
 
-const getSingleStyle = (cmp: d.ComponentCompilerMeta, style: d.StyleCompiler, commentOriginalSelector: boolean) => {
+const getSingleStyle = (cmp: d.ComponentCompilerMeta, style: d.StyleCompiler, buildCtx: d.BuildCtx) => {
   /**
    * the order of these if statements must match with
    * - {@link src/compiler/transformers/component-native/native-static-style.ts#addSingleStyleGetter}
@@ -116,7 +115,7 @@ const getSingleStyle = (cmp: d.ComponentCompilerMeta, style: d.StyleCompiler, co
   if (typeof style.styleStr === 'string') {
     // inline the style string
     // static get style() { return "string"; }
-    return createStyleLiteral(cmp, style, commentOriginalSelector);
+    return createStyleLiteral(cmp, style, buildCtx);
   }
 
   if (Array.isArray(style.externalStyles) && style.externalStyles.length > 0) {
@@ -136,20 +135,28 @@ const getSingleStyle = (cmp: d.ComponentCompilerMeta, style: d.StyleCompiler, co
   return null;
 };
 
-const createStyleLiteral = (cmp: d.ComponentCompilerMeta, style: d.StyleCompiler, commentOriginalSelector: boolean) => {
-  if (cmp.encapsulation === 'scoped' || (commentOriginalSelector && cmp.encapsulation === 'shadow')) {
+const addTagTransform = (cssCode: string, buildCtx: d.BuildCtx) => {
+  if (!buildCtx.config.extras.additionalTagTransformers) {
+    return ts.factory.createNoSubstitutionTemplateLiteral(cssCode);
+  }
+  const tagNames = buildCtx.components.map((c) => c.tagName);
+  return addTagTransformToCssTsAST(cssCode, tagNames);
+};
+
+const createStyleLiteral = (cmp: d.ComponentCompilerMeta, style: d.StyleCompiler, buildCtx: d.BuildCtx) => {
+  if (cmp.encapsulation === 'scoped') {
     // scope the css first
     const scopeId = getScopeId(cmp.tagName, style.modeName);
-    return ts.factory.createStringLiteral(scopeCss(style.styleStr, scopeId, commentOriginalSelector));
+    return addTagTransform(scopeCss(style.styleStr, scopeId, false), buildCtx);
   }
 
-  return ts.factory.createStringLiteral(style.styleStr);
+  return addTagTransform(style.styleStr, buildCtx);
 };
 
 /**
- * Helper method to create a style identifier for a component using {@link createStyleIdentifierFromUrl}.
- * The method ensures that duplicate styles are removed and that the order of the styles is preserved.
- * It also ensures that the style identifier is unique.
+ * Helper method to create a style identifier for a component. The method
+ * ensures that duplicate styles are removed and that the order of the styles is
+ * preserved. It also ensures that the style identifier is unique.
  *
  * @param cmp the metadata associated with the component being evaluated
  * @param style style meta data
@@ -205,11 +212,11 @@ export const createStyleIdentifier = (cmp: d.ComponentCompilerMeta, style: d.Sty
 const createIdentifierFromStyleIdentifier = (
   styleIdentifier: string,
   externalStyleIds: string[],
-): ts.Identifier | ts.BinaryExpression => {
+): ts.CallExpression | ts.BinaryExpression => {
   const id = externalStyleIds[0];
 
   if (externalStyleIds.length === 1) {
-    return ts.factory.createIdentifier(styleIdentifier + id);
+    return ts.factory.createCallExpression(ts.factory.createIdentifier(styleIdentifier + id), undefined, []);
   }
 
   return ts.factory.createBinaryExpression(

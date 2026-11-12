@@ -1,3 +1,5 @@
+import { MockCSSStyleSheet } from './css-style-sheet';
+import { MockDocumentFragment } from './document-fragment';
 import {
   MockAnchorElement,
   MockBaseElement,
@@ -152,18 +154,22 @@ const WINDOW_PROPS = [
   'FocusEvent',
   'KeyboardEvent',
   'MouseEvent',
+  'CSSStyleSheet',
 ];
 
 const GLOBAL_CONSTRUCTORS: [string, any][] = [
+  ['CSSStyleSheet', MockCSSStyleSheet],
   ['CustomEvent', MockCustomEvent],
+  ['DocumentFragment', MockDocumentFragment],
+  ['DOMParser', MockDOMParser],
   ['Event', MockEvent],
-  ['Headers', MockHeaders],
   ['FocusEvent', MockFocusEvent],
+  ['Headers', MockHeaders],
   ['KeyboardEvent', MockKeyboardEvent],
   ['MouseEvent', MockMouseEvent],
   ['Request', MockRequest],
   ['Response', MockResponse],
-  ['DOMParser', MockDOMParser],
+  ['ShadowRoot', MockDocumentFragment],
 
   ['HTMLAnchorElement', MockAnchorElement],
   ['HTMLBaseElement', MockBaseElement],

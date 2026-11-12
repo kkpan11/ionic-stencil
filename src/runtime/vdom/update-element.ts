@@ -1,15 +1,26 @@
 import { BUILD } from '@app-data';
-import { EMPTY_OBJ } from '@utils';
 
 import type * as d from '../../declarations';
 import { NODE_TYPE } from '../runtime-constants';
 import { setAccessor } from './set-accessor';
 
+/**
+ * Handle updating attributes on the component element based on the current
+ * values present in the virtual DOM.
+ *
+ * If the component of interest uses shadow DOM these are added to the shadow
+ * root's host element.
+ *
+ * @param oldVnode an old virtual DOM node or null
+ * @param newVnode a new virtual DOM node
+ * @param isSvgMode whether or not we're in an SVG context
+ * @param isInitialRender whether this is the first render of the VDOM
+ */
 export const updateElement = (
   oldVnode: d.VNode | null,
   newVnode: d.VNode,
   isSvgMode: boolean,
-  memberName?: string,
+  isInitialRender?: boolean,
 ): void => {
   // if the element passed in is a shadow root, which is a document fragment
   // then we want to be adding attrs/props to the shadow root's "host" element
@@ -18,21 +29,37 @@ export const updateElement = (
     newVnode.$elm$.nodeType === NODE_TYPE.DocumentFragment && newVnode.$elm$.host
       ? newVnode.$elm$.host
       : (newVnode.$elm$ as any);
-  const oldVnodeAttrs = (oldVnode && oldVnode.$attrs$) || EMPTY_OBJ;
-  const newVnodeAttrs = newVnode.$attrs$ || EMPTY_OBJ;
+  const oldVnodeAttrs = (oldVnode && oldVnode.$attrs$) || {};
+  const newVnodeAttrs = newVnode.$attrs$ || {};
 
   if (BUILD.updatable) {
     // remove attributes no longer present on the vnode by setting them to undefined
-    for (memberName of sortedAttrNames(Object.keys(oldVnodeAttrs))) {
+    for (const memberName of sortedAttrNames(Object.keys(oldVnodeAttrs))) {
       if (!(memberName in newVnodeAttrs)) {
-        setAccessor(elm, memberName, oldVnodeAttrs[memberName], undefined, isSvgMode, newVnode.$flags$);
+        setAccessor(
+          elm,
+          memberName,
+          oldVnodeAttrs[memberName],
+          undefined,
+          isSvgMode,
+          newVnode.$flags$,
+          isInitialRender,
+        );
       }
     }
   }
 
   // add new & update changed attributes
-  for (memberName of sortedAttrNames(Object.keys(newVnodeAttrs))) {
-    setAccessor(elm, memberName, oldVnodeAttrs[memberName], newVnodeAttrs[memberName], isSvgMode, newVnode.$flags$);
+  for (const memberName of sortedAttrNames(Object.keys(newVnodeAttrs))) {
+    setAccessor(
+      elm,
+      memberName,
+      oldVnodeAttrs[memberName],
+      newVnodeAttrs[memberName],
+      isSvgMode,
+      newVnode.$flags$,
+      isInitialRender,
+    );
   }
 };
 

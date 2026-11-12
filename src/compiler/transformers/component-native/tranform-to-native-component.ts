@@ -8,7 +8,7 @@ import { addLegacyApis } from '../core-runtime-apis';
 import { defineCustomElement } from '../define-custom-element';
 import { updateStyleImports } from '../style-imports';
 import { getComponentMeta, getModuleFromSourceFile } from '../transform-utils';
-import { updateNativeComponentClass } from './native-component';
+import { updateNativeComponentClass, updateNativeExtendedClass } from './native-component';
 
 /**
  * A function that returns a transformation factory. The returned factory
@@ -30,6 +30,7 @@ import { updateNativeComponentClass } from './native-component';
 export const nativeComponentTransform = (
   compilerCtx: d.CompilerCtx,
   transformOpts: d.TransformOptions,
+  buildCtx: d.BuildCtx,
 ): ts.TransformerFactory<ts.SourceFile> => {
   return (transformCtx: ts.TransformationContext) => {
     return (tsSourceFile: ts.SourceFile) => {
@@ -45,7 +46,9 @@ export const nativeComponentTransform = (
         if (ts.isClassDeclaration(node)) {
           const cmp = getComponentMeta(compilerCtx, tsSourceFile, node);
           if (cmp != null) {
-            return updateNativeComponentClass(transformOpts, node, moduleFile, cmp);
+            return updateNativeComponentClass(transformOpts, node, moduleFile, cmp, buildCtx);
+          } else if (compilerCtx.moduleMap.get(tsSourceFile.fileName)?.isExtended) {
+            return updateNativeExtendedClass(node, moduleFile, transformOpts);
           }
         }
 

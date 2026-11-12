@@ -64,31 +64,47 @@ describe('validateTesting', () => {
   });
 
   describe('browserHeadless', () => {
+    const originalCI = process.env.CI;
+    beforeEach(() => {
+      delete process.env.CI;
+    });
+
+    afterEach(() => {
+      process.env.CI = originalCI;
+    });
+
     describe("using 'headless' value from cli", () => {
-      it.each([false, true, 'new'])('sets browserHeadless to %s', (headless) => {
+      it.each([false, 'shell'])('sets browserHeadless to %s', (headless) => {
         userConfig.flags = { ...flags, e2e: true, headless };
         const { config } = validateConfig(userConfig, mockLoadConfigInit());
         expect(config.testing.browserHeadless).toBe(headless);
       });
 
-      it('defaults to true outside of CI', () => {
+      it('throws if browser headless is set to deprecated value `true`', () => {
+        userConfig.flags = { ...flags, e2e: true, headless: true };
+        expect(() => validateConfig(userConfig, mockLoadConfigInit())).toThrow(
+          'Setting "browserHeadless" config to `true` is not supported anymore, please set it to "shell"!',
+        );
+      });
+
+      it('defaults to "shell" outside of CI', () => {
         userConfig.flags = { ...flags, e2e: true };
         const { config } = validateConfig(userConfig, mockLoadConfigInit());
-        expect(config.testing.browserHeadless).toBe(true);
+        expect(config.testing.browserHeadless).toBe('shell');
       });
     });
 
     describe('with ci enabled', () => {
-      it("forces using the old headless mode when 'headless: false'", () => {
+      it("forces using the shell headless mode when 'headless: false'", () => {
         userConfig.flags = { ...flags, ci: true, e2e: true, headless: false };
         const { config } = validateConfig(userConfig, mockLoadConfigInit());
-        expect(config.testing.browserHeadless).toBe(true);
+        expect(config.testing.browserHeadless).toBe('shell');
       });
 
-      it('allows the new headless mode to be used', () => {
-        userConfig.flags = { ...flags, ci: true, e2e: true, headless: 'new' };
+      it('allows the shell headless mode to be used', () => {
+        userConfig.flags = { ...flags, ci: true, e2e: true, headless: 'shell' };
         const { config } = validateConfig(userConfig, mockLoadConfigInit());
-        expect(config.testing.browserHeadless).toBe('new');
+        expect(config.testing.browserHeadless).toBe('shell');
       });
     });
 
@@ -97,7 +113,7 @@ describe('validateTesting', () => {
         userConfig.flags = { ...flags, e2e: true, headless: undefined };
       });
 
-      it.each<boolean | 'new'>([false, true, 'new'])(
+      it.each<boolean | 'shell'>([false, 'shell'])(
         'uses %s browserHeadless mode from testing config',
         (browserHeadlessValue) => {
           userConfig.testing = { browserHeadless: browserHeadlessValue };
@@ -106,15 +122,31 @@ describe('validateTesting', () => {
         },
       );
 
-      it('defaults the headless mode to true when browserHeadless is not provided', () => {
+      it('throws if browser headless is set to deprecated value `true`', () => {
+        userConfig.testing = { browserHeadless: true };
+        expect(() => validateConfig(userConfig, mockLoadConfigInit())).toThrow(
+          'Setting "browserHeadless" config to `true` is not supported anymore, please set it to "shell"!',
+        );
+      });
+
+      it('defaults the headless mode to "shell" when browserHeadless is not provided', () => {
         userConfig.testing = {};
         const { config } = validateConfig(userConfig, mockLoadConfigInit());
-        expect(config.testing.browserHeadless).toBe(true);
+        expect(config.testing.browserHeadless).toBe('shell');
       });
     });
   });
 
   describe('devTools', () => {
+    const originalCI = process.env.CI;
+    beforeEach(() => {
+      delete process.env.CI;
+    });
+
+    afterEach(() => {
+      process.env.CI = originalCI;
+    });
+
     it('ignores devTools settings if CI is enabled', () => {
       userConfig.flags = { ...flags, ci: true, devtools: true, e2e: true };
       userConfig.testing = {};
@@ -170,6 +202,15 @@ describe('validateTesting', () => {
   });
 
   describe('browserArgs', () => {
+    const originalCI = process.env.CI;
+    beforeEach(() => {
+      delete process.env.CI;
+    });
+
+    afterEach(() => {
+      process.env.CI = originalCI;
+    });
+
     it('does not add duplicate default fields', () => {
       userConfig.flags = { ...flags, e2e: true };
       userConfig.testing = {
@@ -181,18 +222,82 @@ describe('validateTesting', () => {
       expect(config.testing.browserArgs).toEqual(['--unique', '--font-render-hinting=medium', '--incognito']);
     });
 
-    it('adds default browser args', () => {
-      userConfig.flags = { ...flags, e2e: true };
+    describe('adds default browser args', () => {
+      const originalCI = process.env.CI;
 
-      const { config } = validateConfig(userConfig, mockLoadConfigInit());
+      beforeAll(() => {
+        delete process.env.CI;
+      });
 
-      expect(config.testing.browserArgs).toEqual(['--font-render-hinting=medium', '--incognito']);
+      afterAll(() => {
+        process.env.CI = originalCI;
+      });
+
+      it('adds default browser args when not in CI', () => {
+        userConfig.flags = { ...flags, e2e: true };
+
+        const { config } = validateConfig(userConfig, mockLoadConfigInit());
+
+        expect(config.testing.browserArgs).toEqual(['--font-render-hinting=medium', '--incognito']);
+      });
     });
 
     it("adds additional browser args when the 'ci' flag is set", () => {
       userConfig.flags = { ...flags, ci: true, e2e: true };
       const { config } = validateConfig(userConfig, mockLoadConfigInit());
       expect(config.testing.browserArgs).toEqual([
+        '--font-render-hinting=medium',
+        '--incognito',
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+      ]);
+    });
+
+    describe('adds additional browser args when process.env.CI is set', () => {
+      const originalCI = process.env.CI;
+      beforeAll(() => {
+        process.env.CI = 'true';
+      });
+
+      afterAll(() => {
+        process.env.CI = originalCI;
+      });
+
+      it('adds default browser args when CI is set', () => {
+        userConfig.flags = { ...flags, ci: true, e2e: true };
+        const { config } = validateConfig(userConfig, mockLoadConfigInit());
+        expect(config.testing.browserArgs).toEqual([
+          '--font-render-hinting=medium',
+          '--incognito',
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+        ]);
+      });
+    });
+  });
+
+  describe('browserArgs in CI', () => {
+    const originalCI = process.env.CI;
+    beforeEach(() => {
+      process.env.CI = 'true';
+    });
+
+    afterEach(() => {
+      process.env.CI = originalCI;
+    });
+
+    it("adds additional browser args when 'CI' environment variable is set", () => {
+      userConfig.flags = { ...flags, e2e: true };
+      userConfig.testing = {
+        browserArgs: ['--unique', '--font-render-hinting=medium'],
+      };
+
+      const { config } = validateConfig(userConfig, mockLoadConfigInit());
+
+      expect(config.testing.browserArgs).toEqual([
+        '--unique',
         '--font-render-hinting=medium',
         '--incognito',
         '--no-sandbox',
@@ -579,7 +684,7 @@ describe('validateTesting', () => {
         throw new Error('No testRegex was found in the Stencil TestingConfig. Failing test.');
       }
 
-      testRegex = new RegExp(testRegexSetting);
+      testRegex = new RegExp(testRegexSetting[0]);
     });
 
     describe('test.* extensions', () => {
@@ -690,13 +795,27 @@ describe('validateTesting', () => {
       userConfig.flags = { ...flags, e2e: true };
       userConfig.testing = {
         testMatch: undefined,
+        testRegex: ['/regexStr/'],
+      };
+
+      const { config } = validateConfig(userConfig, mockLoadConfigInit());
+
+      expect(config.testing.testMatch).toBeUndefined();
+      expect(config.testing.testRegex).toEqual(['/regexStr/']);
+    });
+
+    it('transforms testRegex to an array if passed in as string', () => {
+      userConfig.flags = { ...flags, e2e: true };
+      userConfig.testing = {
+        testMatch: undefined,
+        // @ts-expect-error invalid type because of type update
         testRegex: '/regexStr/',
       };
 
       const { config } = validateConfig(userConfig, mockLoadConfigInit());
 
       expect(config.testing.testMatch).toBeUndefined();
-      expect(config.testing.testRegex).toBe('/regexStr/');
+      expect(config.testing.testRegex).toEqual(['/regexStr/']);
     });
   });
 

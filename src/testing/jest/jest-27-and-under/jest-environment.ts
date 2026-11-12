@@ -6,20 +6,23 @@ import { JestPuppeteerEnvironmentConstructor } from '../jest-apis';
 
 export function createJestPuppeteerEnvironment(): JestPuppeteerEnvironmentConstructor {
   const JestEnvironment = class extends NodeEnvironment {
-    // TODO(STENCIL-1023): Remove this @ts-expect-error
-    // @ts-expect-error - Stencil's Jest environment adds additional properties to the Jest global, but does not extend it
-    global: JestEnvironmentGlobal;
-    browser: any = null;
-    pages: any[] = [];
+    browser: any;
+    pages: any[];
 
     constructor(config: any) {
       super(config);
+      // Initialize fields after super() to ensure parent's global is not overwritten
+      // (required for ES2022+ target where field initializers run after super())
+      this.browser = null;
+      this.pages = [];
+      // Debug: Verify this.global is properly set
     }
 
     override async setup() {
       if ((process.env as E2EProcessEnv).__STENCIL_E2E_TESTS__ === 'true') {
-        this.global.__NEW_TEST_PAGE__ = this.newPuppeteerPage.bind(this);
-        this.global.__CLOSE_OPEN_PAGES__ = this.closeOpenPages.bind(this);
+        const globalContext = this.global as unknown as JestEnvironmentGlobal;
+        globalContext.__NEW_TEST_PAGE__ = this.newPuppeteerPage.bind(this);
+        globalContext.__CLOSE_OPEN_PAGES__ = this.closeOpenPages.bind(this);
       }
     }
 
@@ -28,6 +31,11 @@ export function createJestPuppeteerEnvironment(): JestPuppeteerEnvironmentConstr
         // load the browser and page on demand
         this.browser = await connectBrowser();
       }
+
+      /**
+       * if the user had open pages before, close them all when creating a new one
+       */
+      await this.closeOpenPages();
 
       const page = await newBrowserPage(this.browser);
       this.pages.push(page);
@@ -40,7 +48,7 @@ export function createJestPuppeteerEnvironment(): JestPuppeteerEnvironmentConstr
     }
 
     async closeOpenPages() {
-      await Promise.all(this.pages.map((page) => page.close()));
+      await Promise.all(this.pages.filter((page) => !page.isClosed()).map((page) => page.close()));
       this.pages.length = 0;
     }
 

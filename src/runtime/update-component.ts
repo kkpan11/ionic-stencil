@@ -1,8 +1,8 @@
 import { BUILD, NAMESPACE } from '@app-data';
-import { Build, consoleError, doc, getHostRef, nextTick, plt, win, writeTask } from '@platform';
-import { CMP_FLAGS, HOST_FLAGS } from '@utils';
+import { Build, consoleError, getHostRef, nextTick, plt, win, writeTask } from '@platform';
 
 import type * as d from '../declarations';
+import { CMP_FLAGS, HOST_FLAGS } from '../utils/constants';
 import { emitEvent } from './event-emitter';
 import { createTime } from './profile';
 import { PLATFORM_FLAGS } from './runtime-constants';
@@ -11,12 +11,20 @@ import { renderVdom } from './vdom/vdom-render';
 
 export const attachToAncestor = (hostRef: d.HostRef, ancestorComponent?: d.HostElement) => {
   if (BUILD.asyncLoading && ancestorComponent && !hostRef.$onRenderResolve$ && ancestorComponent['s-p']) {
-    ancestorComponent['s-p'].push(new Promise((r) => (hostRef.$onRenderResolve$ = r)));
+    const index = ancestorComponent['s-p'].push(
+      new Promise(
+        (r) =>
+          (hostRef.$onRenderResolve$ = () => {
+            ancestorComponent['s-p'].splice(index - 1, 1);
+            r();
+          }),
+      ),
+    );
   }
 };
 
-export const scheduleUpdate = (hostRef: d.HostRef, isInitialLoad: boolean) => {
-  if (BUILD.taskQueue && BUILD.updatable) {
+export const scheduleUpdate = (hostRef: d.HostRef, isInitialLoad: boolean): Promise<void> | void => {
+  if (BUILD.updatable) {
     hostRef.$flags$ |= HOST_FLAGS.isQueuedForUpdate;
   }
   if (BUILD.asyncLoading && hostRef.$flags$ & HOST_FLAGS.isWaitingForChildren) {
@@ -29,6 +37,14 @@ export const scheduleUpdate = (hostRef: d.HostRef, isInitialLoad: boolean) => {
   // has already fired off its lifecycle update then
   // fire off the initial update
   const dispatch = () => dispatchHooks(hostRef, isInitialLoad);
+
+  if (isInitialLoad) {
+    queueMicrotask(() => {
+      dispatch();
+    });
+    return;
+  }
+
   return BUILD.taskQueue ? writeTask(dispatch) : dispatch();
 };
 
@@ -47,6 +63,25 @@ const dispatchHooks = (hostRef: d.HostRef, isInitialLoad: boolean): Promise<void
   const endSchedule = createTime('scheduleUpdate', hostRef.$cmpMeta$.$tagName$);
   const instance = BUILD.lazyLoad ? hostRef.$lazyInstance$ : elm;
 
+  /**
+   * Given a user imports a component compiled with a `dist-custom-element`
+   * output target into a Stencil project compiled with a `dist` output target,
+   * then `instance` will be `undefined` as `hostRef` won't have a `lazyInstance`
+   * property. In this case, the component will fail to render in one of the
+   * subsequent functions.
+   *
+   * For this scenario to work the user needs to set the `externalRuntime` flag
+   * for the `dist-custom-element` component that is being imported into the `dist`
+   * Stencil project.
+   */
+  if (!instance) {
+    throw new Error(
+      `Can't render component <${elm.tagName.toLowerCase()} /> with invalid Stencil runtime! ` +
+        'Make sure this imported component is compiled with a `externalRuntime: true` flag. ' +
+        'For more information, please refer to https://stenciljs.com/docs/custom-elements#externalruntime',
+    );
+  }
+
   // We're going to use this variable together with `enqueue` to implement a
   // little promise-based queue. We start out with it `undefined`. When we add
   // the first function to the queue we'll set this variable to be that
@@ -62,39 +97,46 @@ const dispatchHooks = (hostRef: d.HostRef, isInitialLoad: boolean): Promise<void
   let maybePromise: Promise<void> | undefined;
 
   if (isInitialLoad) {
-    if (BUILD.lazyLoad && BUILD.hostListener) {
-      hostRef.$flags$ |= HOST_FLAGS.isListenReady;
-      if (hostRef.$queuedListeners$) {
-        hostRef.$queuedListeners$.map(([methodName, event]) => safeCall(instance, methodName, event));
-        hostRef.$queuedListeners$ = undefined;
+    if (BUILD.lazyLoad) {
+      // Fire deferred connectedCallback before componentWillLoad
+      if (BUILD.slotRelocation && hostRef.$deferredConnectedCallback$) {
+        hostRef.$deferredConnectedCallback$ = false;
+        safeCall(instance, 'connectedCallback', undefined, elm);
+      }
+
+      if (BUILD.hostListener) {
+        hostRef.$flags$ |= HOST_FLAGS.isListenReady;
+        if (hostRef.$queuedListeners$) {
+          hostRef.$queuedListeners$.map(([methodName, event]) => safeCall(instance, methodName, event, elm));
+          hostRef.$queuedListeners$ = undefined;
+        }
+      }
+
+      // Fire any pending fetch callbacks
+      if (hostRef.$fetchedCbList$.length) {
+        hostRef.$fetchedCbList$.forEach((cb) => cb(elm));
       }
     }
     emitLifecycleEvent(elm, 'componentWillLoad');
-    if (BUILD.cmpWillLoad) {
-      // If `componentWillLoad` returns a `Promise` then we want to wait on
-      // whatever's going on in that `Promise` before we launch into
-      // rendering the component, doing other lifecycle stuff, etc. So
-      // in that case we assign the returned promise to the variable we
-      // declared above to hold a possible 'queueing' Promise
-      maybePromise = safeCall(instance, 'componentWillLoad');
-    }
+    // If `componentWillLoad` returns a `Promise` then we want to wait on
+    // whatever's going on in that `Promise` before we launch into
+    // rendering the component, doing other lifecycle stuff, etc. So
+    // in that case we assign the returned promise to the variable we
+    // declared above to hold a possible 'queueing' Promise
+    maybePromise = safeCall(instance, 'componentWillLoad', undefined, elm);
   } else {
     emitLifecycleEvent(elm, 'componentWillUpdate');
 
-    if (BUILD.cmpWillUpdate) {
-      // Like `componentWillLoad` above, we allow Stencil component
-      // authors to return a `Promise` from this lifecycle callback, and
-      // we specify that our runtime will wait for that `Promise` to
-      // resolve before the component re-renders. So if the method
-      // returns a `Promise` we need to keep it around!
-      maybePromise = safeCall(instance, 'componentWillUpdate');
-    }
+    // Like `componentWillLoad` above, we allow Stencil component
+    // authors to return a `Promise` from this lifecycle callback, and
+    // we specify that our runtime will wait for that `Promise` to
+    // resolve before the component re-renders. So if the method
+    // returns a `Promise` we need to keep it around!
+    maybePromise = safeCall(instance, 'componentWillUpdate', undefined, elm);
   }
 
   emitLifecycleEvent(elm, 'componentWillRender');
-  if (BUILD.cmpWillRender) {
-    maybePromise = enqueue(maybePromise, () => safeCall(instance, 'componentWillRender'));
-  }
+  maybePromise = enqueue(maybePromise, () => safeCall(instance, 'componentWillRender', undefined, elm));
 
   endSchedule();
 
@@ -118,7 +160,12 @@ const dispatchHooks = (hostRef: d.HostRef, isInitialLoad: boolean): Promise<void
  * @returns either a `Promise` or the return value of the provided function
  */
 const enqueue = (maybePromise: Promise<void> | undefined, fn: () => Promise<void>): Promise<void> | undefined =>
-  isPromisey(maybePromise) ? maybePromise.then(fn) : fn();
+  isPromisey(maybePromise)
+    ? maybePromise.then(fn).catch((err) => {
+        console.error(err);
+        fn();
+      })
+    : fn();
 
 /**
  * Check that a value is a `Promise`. To check, we first see if the value is an
@@ -208,7 +255,7 @@ const updateComponent = async (
     if (childrenPromises.length === 0) {
       postUpdate();
     } else {
-      Promise.all(childrenPromises).then(postUpdate);
+      Promise.all(childrenPromises).then(postUpdate).catch(postUpdate);
       hostRef.$flags$ |= HOST_FLAGS.isWaitingForChildren;
       childrenPromises.length = 0;
     }
@@ -237,7 +284,6 @@ const callRender = (hostRef: d.HostRef, instance: any, elm: HTMLElement, isIniti
   // https://rollupjs.org/guide/en/#treeshake tryCatchDeoptimization
   const allRenderFn = BUILD.allRenderFn ? true : false;
   const lazyLoad = BUILD.lazyLoad ? true : false;
-  const taskQueue = BUILD.taskQueue ? true : false;
   const updatable = BUILD.updatable ? true : false;
 
   try {
@@ -248,7 +294,7 @@ const callRender = (hostRef: d.HostRef, instance: any, elm: HTMLElement, isIniti
      */
     instance = allRenderFn ? instance.render() : instance.render && instance.render();
 
-    if (updatable && taskQueue) {
+    if (updatable) {
       hostRef.$flags$ &= ~HOST_FLAGS.isQueuedForUpdate;
     }
 
@@ -290,14 +336,12 @@ export const postUpdateComponent = (hostRef: d.HostRef) => {
   const instance = BUILD.lazyLoad ? hostRef.$lazyInstance$ : (elm as any);
   const ancestorComponent = hostRef.$ancestorComponent$;
 
-  if (BUILD.cmpDidRender) {
-    if (BUILD.isDev) {
-      hostRef.$flags$ |= HOST_FLAGS.devOnRender;
-    }
-    safeCall(instance, 'componentDidRender');
-    if (BUILD.isDev) {
-      hostRef.$flags$ &= ~HOST_FLAGS.devOnRender;
-    }
+  if (BUILD.isDev) {
+    hostRef.$flags$ |= HOST_FLAGS.devOnRender;
+  }
+  safeCall(instance, 'componentDidRender', undefined, elm);
+  if (BUILD.isDev) {
+    hostRef.$flags$ &= ~HOST_FLAGS.devOnRender;
   }
   emitLifecycleEvent(elm, 'componentDidRender');
 
@@ -309,14 +353,12 @@ export const postUpdateComponent = (hostRef: d.HostRef) => {
       addHydratedFlag(elm);
     }
 
-    if (BUILD.cmpDidLoad) {
-      if (BUILD.isDev) {
-        hostRef.$flags$ |= HOST_FLAGS.devOnDidLoad;
-      }
-      safeCall(instance, 'componentDidLoad');
-      if (BUILD.isDev) {
-        hostRef.$flags$ &= ~HOST_FLAGS.devOnDidLoad;
-      }
+    if (BUILD.isDev) {
+      hostRef.$flags$ |= HOST_FLAGS.devOnDidLoad;
+    }
+    safeCall(instance, 'componentDidLoad', undefined, elm);
+    if (BUILD.isDev) {
+      hostRef.$flags$ &= ~HOST_FLAGS.devOnDidLoad;
     }
 
     emitLifecycleEvent(elm, 'componentDidLoad');
@@ -329,18 +371,16 @@ export const postUpdateComponent = (hostRef: d.HostRef) => {
       }
     }
   } else {
-    if (BUILD.cmpDidUpdate) {
-      // we've already loaded this component
-      // fire off the user's componentDidUpdate method (if one was provided)
-      // componentDidUpdate runs AFTER render() has been called
-      // and all child components have finished updating
-      if (BUILD.isDev) {
-        hostRef.$flags$ |= HOST_FLAGS.devOnRender;
-      }
-      safeCall(instance, 'componentDidUpdate');
-      if (BUILD.isDev) {
-        hostRef.$flags$ &= ~HOST_FLAGS.devOnRender;
-      }
+    // we've already loaded this component
+    // fire off the user's componentDidUpdate method (if one was provided)
+    // componentDidUpdate runs AFTER render() has been called
+    // and all child components have finished updating
+    if (BUILD.isDev) {
+      hostRef.$flags$ |= HOST_FLAGS.devOnRender;
+    }
+    safeCall(instance, 'componentDidUpdate', undefined, elm);
+    if (BUILD.isDev) {
+      hostRef.$flags$ &= ~HOST_FLAGS.devOnRender;
     }
     emitLifecycleEvent(elm, 'componentDidUpdate');
     endPostUpdate();
@@ -369,7 +409,7 @@ export const postUpdateComponent = (hostRef: d.HostRef) => {
 export const forceUpdate = (ref: any) => {
   if (BUILD.updatable && (Build.isBrowser || Build.isTesting)) {
     const hostRef = getHostRef(ref);
-    const isConnected = hostRef.$hostElement$.isConnected;
+    const isConnected = hostRef?.$hostElement$?.isConnected;
     if (
       isConnected &&
       (hostRef.$flags$ & (HOST_FLAGS.hasRendered | HOST_FLAGS.isQueuedForUpdate)) === HOST_FLAGS.hasRendered
@@ -383,15 +423,17 @@ export const forceUpdate = (ref: any) => {
 };
 
 export const appDidLoad = (who: string) => {
-  // on appload
-  // we have finish the first big initial render
-  if (BUILD.cssAnnotations) {
-    addHydratedFlag(doc.documentElement);
-  }
   if (BUILD.asyncQueue) {
     plt.$flags$ |= PLATFORM_FLAGS.appLoaded;
   }
   nextTick(() => emitEvent(win, 'appload', { detail: { namespace: NAMESPACE } }));
+  if (BUILD.hydrateClientSide) {
+    // we can now clear out the original location map
+    // used by SSR so as to not cause memory leaks
+    if (plt.$orgLocNodes$?.size) {
+      plt.$orgLocNodes$.clear();
+    }
+  }
 
   if (BUILD.profile && performance.measure) {
     performance.measure(`[Stencil] ${NAMESPACE} initial load (by ${who})`, 'st:app:start');
@@ -406,14 +448,15 @@ export const appDidLoad = (who: string) => {
  * @param instance any object that may or may not contain methods
  * @param method method name
  * @param arg single arbitrary argument
+ * @param elm the element which made the call
  * @returns result of method call if it exists, otherwise `undefined`
  */
-export const safeCall = (instance: any, method: string, arg?: any) => {
+export const safeCall = (instance: any, method: string, arg?: any, elm?: HTMLElement) => {
   if (instance && instance[method]) {
     try {
       return instance[method](arg);
     } catch (e) {
-      consoleError(e);
+      consoleError(e, elm);
     }
   }
   return undefined;
@@ -437,11 +480,17 @@ const emitLifecycleEvent = (elm: EventTarget, lifecycleName: string) => {
   }
 };
 
+/**
+ * Set the hydrated flag on a DOM element
+ *
+ * @param elm a reference to a DOM element
+ * @returns undefined
+ */
 const addHydratedFlag = (elm: Element) =>
   BUILD.hydratedClass
-    ? elm.classList.add('hydrated')
+    ? elm.classList.add(BUILD.hydratedSelectorName ?? 'hydrated')
     : BUILD.hydratedAttribute
-      ? elm.setAttribute('hydrated', '')
+      ? elm.setAttribute(BUILD.hydratedSelectorName ?? 'hydrated', '')
       : undefined;
 
 const serverSideConnected = (elm: any) => {

@@ -7,7 +7,7 @@ import { join } from 'path';
 import { getBanner } from '../utils/banner';
 import { BuildOptions, createReplaceData } from '../utils/options';
 import { writePkgJson } from '../utils/write-pkg-json';
-import { externalAlias, getBaseEsbuildOptions, getEsbuildAliases, getEsbuildExternalModules } from './util';
+import { externalAlias, externalNodeModules, getBaseEsbuildOptions, getEsbuildAliases } from './utils';
 
 /**
  * Create objects containing ESbuild options for the two bundles which need to
@@ -17,7 +17,7 @@ import { externalAlias, getBaseEsbuildOptions, getEsbuildAliases, getEsbuildExte
  * @param opts build options
  * @returns an array of ESBuild option objects
  */
-export async function getInternalClientBundle(opts: BuildOptions): Promise<ESBuildOptions[]> {
+export async function getInternalClientBundles(opts: BuildOptions): Promise<ESBuildOptions[]> {
   const inputClientDir = join(opts.srcDir, 'client');
   const outputInternalClientDir = join(opts.output.internalDir, 'client');
   const outputInternalClientPolyfillsDir = join(outputInternalClientDir, 'polyfills');
@@ -32,14 +32,16 @@ export async function getInternalClientBundle(opts: BuildOptions): Promise<ESBui
     name: '@stencil/core/internal/client',
     description:
       'Stencil internal client platform to be imported by the Stencil Compiler and internal runtime. Breaking changes can and will happen at any time.',
-    main: 'index.js',
+    exports: './index.js',
+    main: './index.js',
+    type: 'module',
     sideEffects: false,
   });
 
   const internalClientAliases = getEsbuildAliases();
   internalClientAliases['@platform'] = join(inputClientDir, 'index.ts');
 
-  const clientExternal = getEsbuildExternalModules(opts, opts.output.internalDir);
+  const clientExternal = externalNodeModules;
 
   const internalClientBundle: ESBuildOptions = {
     ...getBaseEsbuildOptions(),
@@ -58,10 +60,8 @@ export async function getInternalClientBundle(opts: BuildOptions): Promise<ESBui
     plugins: [
       replace(createReplaceData(opts)),
       externalAlias('@app-data', '@stencil/core/internal/app-data'),
+      externalAlias('@app-globals', '@stencil/core/internal/app-globals'),
       externalAlias('@utils/shadow-css', './shadow-css.js'),
-      // we want to get the esm, not the cjs, since we're creating an esm
-      // bundle here
-      externalAlias('@stencil/core/mock-doc', '../../mock-doc/index.js'),
       findAndReplaceLoadModule(),
     ],
   };
@@ -70,14 +70,10 @@ export async function getInternalClientBundle(opts: BuildOptions): Promise<ESBui
 
   const polyfills = await fs.readdir(join(opts.srcDir, 'client', 'polyfills'));
   for (const polyFillFile of polyfills) {
-    patchBrowserAliases[join('./polyfills', polyFillFile)] = join(opts.srcDir, 'client', 'polyfills');
+    patchBrowserAliases[`polyfills/${polyFillFile}`] = join(opts.srcDir, 'client', 'polyfills');
   }
 
-  const patchBrowserExternal = [
-    ...getEsbuildExternalModules(opts, opts.output.internalDir),
-    '@stencil/core',
-    '@stencil/core/mock-doc',
-  ];
+  const patchBrowserExternal = [...externalNodeModules, '@stencil/core', '@stencil/core/mock-doc'];
 
   const internalClientPatchBrowserBundle: ESBuildOptions = {
     ...getBaseEsbuildOptions(),
@@ -94,6 +90,7 @@ export async function getInternalClientBundle(opts: BuildOptions): Promise<ESBui
       replace(createReplaceData(opts)),
       externalAlias('@platform', '@stencil/core'),
       externalAlias('@app-data', '@stencil/core/internal/app-data'),
+      externalAlias('@app-globals', '@stencil/core/internal/app-globals'),
     ],
   };
 

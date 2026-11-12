@@ -5,6 +5,7 @@ import type { LoadResult, Plugin, ResolveIdResult, TransformResult } from 'rollu
 import ts from 'typescript';
 
 import type * as d from '../../declarations';
+import type { BundlePlatform } from './bundle-interface';
 import { removeCollectionImports } from '../transformers/remove-collection-imports';
 import { APP_DATA_CONDITIONAL, STENCIL_APP_DATA_ID, STENCIL_APP_GLOBALS_ID } from './entry-alias-ids';
 
@@ -14,7 +15,7 @@ import { APP_DATA_CONDITIONAL, STENCIL_APP_DATA_ID, STENCIL_APP_GLOBALS_ID } fro
  * @param config the Stencil configuration for a particular project
  * @param compilerCtx the current compiler context
  * @param buildCtx the current build context
- * @param build the set build conditionals for the build
+ * @param buildConditionals the set build conditionals for the build
  * @param platform the platform that is being built
  * @returns a Rollup plugin which carries out the necessary work
  */
@@ -22,8 +23,8 @@ export const appDataPlugin = (
   config: d.ValidatedConfig,
   compilerCtx: d.CompilerCtx,
   buildCtx: d.BuildCtx,
-  build: d.BuildConditionals,
-  platform: 'client' | 'hydrate' | 'worker',
+  buildConditionals: d.BuildConditionals,
+  platform: BundlePlatform,
 ): Plugin => {
   if (!platform) {
     return {
@@ -58,17 +59,18 @@ export const appDataPlugin = (
       return null;
     },
 
-    load(id: string): LoadResult {
+    async load(id: string): Promise<LoadResult> {
       if (id === STENCIL_APP_GLOBALS_ID) {
         const s = new MagicString(``);
         appendGlobalScripts(globalScripts, s);
+        await appendGlobalStyles(buildCtx, s, platform);
         return s.toString();
       }
       if (id === STENCIL_APP_DATA_ID) {
         // build custom app-data based off of component metadata
         const s = new MagicString(``);
         appendNamespace(config, s);
-        appendBuildConditionals(config, build, s);
+        appendBuildConditionals(config, buildConditionals, s);
         appendEnv(config, s);
         return s.toString();
       }
@@ -96,6 +98,19 @@ export const appDataPlugin = (
       if (globalScripts.some((s) => s.path === id)) {
         const program = this.parse(code, {});
         const needsDefault = !(program as any).body.some((s: any) => s.type === 'ExportDefaultDeclaration');
+
+        if (needsDefault) {
+          const diagnostic: d.Diagnostic = {
+            level: 'warn',
+            type: 'build',
+            header: 'Missing default export in globalScript',
+            messageText: `globalScript should export a default function.\nSee: https://stenciljs.com/docs/config#globalscript`,
+            relFilePath: id,
+            lines: [],
+          };
+          buildCtx.diagnostics.push(diagnostic);
+        }
+
         const defaultExport = needsDefault ? '\nexport const globalFn = () => {};\nexport default globalFn;' : '';
         code = code + defaultExport;
 
@@ -175,11 +190,13 @@ export const getGlobalScriptData = (config: d.ValidatedConfig, compilerCtx: d.Co
 
 const appendGlobalScripts = (globalScripts: GlobalScript[], s: MagicString) => {
   if (globalScripts.length === 1) {
-    s.prepend(`import appGlobalScript from '${globalScripts[0].path}';\n`);
+    s.prepend(`import * as appGlobalScriptNs from '${globalScripts[0].path}';\n`);
+    s.prepend(`const appGlobalScript = appGlobalScriptNs.default || (() => {});\n`);
     s.append(`export const globalScripts = appGlobalScript;\n`);
   } else if (globalScripts.length > 1) {
     globalScripts.forEach((globalScript) => {
-      s.prepend(`import ${globalScript.defaultName} from '${globalScript.path}';\n`);
+      s.prepend(`import * as ${globalScript.defaultName}Ns from '${globalScript.path}';\n`);
+      s.prepend(`const ${globalScript.defaultName} = ${globalScript.defaultName}Ns.default || (() => {});\n`);
     });
 
     s.append(`export const globalScripts = () => {\n`);
@@ -195,18 +212,37 @@ const appendGlobalScripts = (globalScripts: GlobalScript[], s: MagicString) => {
 };
 
 /**
+ * Appends the global styles to the MagicString.
+ *
+ * @param buildCtx the build context
+ * @param s the MagicString to append the global styles onto
+ * @param platform the platform that is being built
+ */
+const appendGlobalStyles = async (buildCtx: d.BuildCtx, s: MagicString, platform: BundlePlatform) => {
+  const { addGlobalStyleToComponents } = buildCtx.config.extras;
+  const shouldIncludeGlobalStyles =
+    addGlobalStyleToComponents === true || (addGlobalStyleToComponents === 'client' && platform === 'client');
+  const globalStyles = buildCtx.config.globalStyle && shouldIncludeGlobalStyles ? await buildCtx.stylesPromise : '';
+  s.append(`export const globalStyles = ${JSON.stringify(globalStyles)};\n`);
+};
+
+/**
  * Generates the `BUILD` constant that is used at compile-time in a Stencil project
  *
  * **This function mutates the provided {@link MagicString} argument**
  *
  * @param config the configuration associated with the Stencil project
- * @param build the build conditionals to serialize into a JS object
+ * @param buildConditionals the build conditionals to serialize into a JS object
  * @param s a `MagicString` to append the generated constant onto
  */
-const appendBuildConditionals = (config: d.ValidatedConfig, build: d.BuildConditionals, s: MagicString): void => {
-  const buildData = Object.keys(build)
+export const appendBuildConditionals = (
+  config: d.ValidatedConfig,
+  buildConditionals: d.BuildConditionals,
+  s: MagicString,
+): void => {
+  const buildData = Object.keys(buildConditionals)
     .sort()
-    .map((key) => key + ': ' + ((build as any)[key] ? 'true' : 'false'))
+    .map((key) => key + ': ' + JSON.stringify((buildConditionals as any)[key]))
     .join(', ');
 
   s.append(`export const BUILD = /* ${config.fsNamespace} */ { ${buildData} };\n`);

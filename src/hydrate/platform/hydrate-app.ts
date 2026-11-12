@@ -1,6 +1,15 @@
 import { globalScripts } from '@app-globals';
-import { doc, getHostRef, loadModule, plt, registerHost } from '@platform';
-import { connectedCallback, insertVdomAnnotations } from '@runtime';
+import {
+  addHostEventListeners,
+  getHostRef,
+  loadModule,
+  modeResolver,
+  plt,
+  registerHost,
+  setScopedSSR,
+} from '@platform';
+import { connectedCallback, insertVdomAnnotations, setMode } from '@runtime';
+import { CMP_FLAGS } from '@utils';
 
 import type * as d from '../../declarations';
 import { proxyHostElement } from './proxy-host-element';
@@ -16,6 +25,7 @@ export function hydrateApp(
     resolve: (results: d.HydrateResults) => void,
   ) => void,
   resolve: (results: d.HydrateResults) => void,
+  abortController: AbortController,
 ) {
   const connectedElements = new Set<any>();
   const createdElements = new Set<HTMLElement>();
@@ -23,14 +33,36 @@ export function hydrateApp(
   const orgDocumentCreateElement = win.document.createElement;
   const orgDocumentCreateElementNS = win.document.createElementNS;
   const resolved = Promise.resolve();
+  setScopedSSR(opts);
 
   let tmrId: any;
   let ranCompleted = false;
+  // In case a per-call `opts.modes` is provided, cache any global mode
+  // resolver so we can restore it after the render is complete
+  let modeResolverSnapshot: d.ResolutionHandler[] | undefined;
+  // Resolves once the render is finalizing (error or timeout), so components
+  // still mid-`await` can stop waiting instead of resuming against a window
+  // that's about to be torn down, and so their own in-flight `fetch()` calls
+  // (wrapped in the hydrate factory closure) get aborted rather than running
+  // to completion against it. See #6864.
+  const abortedPromise = new Promise<void>((res) => {
+    if (abortController.signal.aborted) {
+      res();
+    } else {
+      abortController.signal.addEventListener('abort', () => res(), { once: true });
+    }
+  });
 
   function hydratedComplete() {
-    global.clearTimeout(tmrId);
+    globalThis.clearTimeout(tmrId);
     createdElements.clear();
     connectedElements.clear();
+
+    if (modeResolverSnapshot) {
+      modeResolver.length = 0;
+      modeResolver.push(...modeResolverSnapshot);
+      modeResolverSnapshot = undefined;
+    }
 
     if (!ranCompleted) {
       ranCompleted = true;
@@ -53,6 +85,10 @@ export function hydrateApp(
 
   function hydratedError(err: any) {
     renderCatchError(opts, results, err);
+    // let any component still awaiting `componentOnReady()` bail out, and
+    // abort any of their in-flight `fetch()` calls, instead of resuming
+    // after `hydratedComplete` tears the window down.
+    abortController.abort();
     hydratedComplete();
   }
 
@@ -84,6 +120,24 @@ export function hydrateApp(
 
           if (Cstr != null && Cstr.cmpMeta != null) {
             // we found valid component metadata
+
+            if (
+              opts.serializeShadowRoot !== false &&
+              !!(Cstr.cmpMeta.$flags$ & CMP_FLAGS.shadowDomEncapsulation) &&
+              tagRequiresScoped(elm.tagName, opts.serializeShadowRoot)
+            ) {
+              // this component requires scoped css encapsulation during SSR
+              const cmpMeta = Cstr.cmpMeta;
+              cmpMeta.$flags$ |= CMP_FLAGS.shadowNeedsScopedCss;
+
+              // 'cmpMeta' is a getter only, so needs redefining
+              Object.defineProperty(Cstr as any, 'cmpMeta', {
+                get: function (this: any) {
+                  return cmpMeta;
+                },
+              });
+            }
+
             createdElements.add(elm);
             elm.connectedCallback = patchedConnectedCallback;
 
@@ -91,7 +145,7 @@ export function hydrateApp(
             registerHost(elm, Cstr.cmpMeta);
 
             // proxy the host element with the component's metadata
-            proxyHostElement(elm, Cstr.cmpMeta);
+            proxyHostElement(elm, Cstr);
           }
         }
       }
@@ -120,7 +174,7 @@ export function hydrateApp(
 
           // add it to our Set so we know it's already being connected
           connectedElements.add(elm);
-          return hydrateComponent(win, results, elm.nodeName, elm, waitingElements);
+          return hydrateComponent.call(elm, win, results, elm.nodeName, elm, waitingElements, abortedPromise);
         }
       }
 
@@ -148,11 +202,18 @@ export function hydrateApp(
     } as (typeof window)['document']['createElementNS'];
 
     // ensure we use NodeJS's native setTimeout, not the mocked hydrate app scoped one
-    tmrId = global.setTimeout(timeoutExceeded, opts.timeout);
+    tmrId = globalThis.setTimeout(timeoutExceeded, opts.timeout);
 
-    plt.$resourcesUrl$ = new URL(opts.resourcesUrl || './', doc.baseURI).href;
+    plt.$resourcesUrl$ = new URL(opts.resourcesUrl || './', win.document.baseURI).href;
 
     globalScripts();
+
+    // Apply `opts.modes` after the global script runs
+    // so an explicit per-call override always wins
+    if (Array.isArray(opts.modes)) {
+      modeResolverSnapshot = modeResolver.slice();
+      opts.modes.forEach((mode) => setMode(mode));
+    }
 
     patchChild(win.document.body);
 
@@ -163,11 +224,13 @@ export function hydrateApp(
 }
 
 async function hydrateComponent(
+  this: HTMLElement,
   win: Window & typeof globalThis,
   results: d.HydrateResults,
   tagName: string,
   elm: d.HostElement,
   waitingElements: Set<HTMLElement>,
+  aborted: Promise<void>,
 ) {
   tagName = tagName.toLowerCase();
   const Cstr = loadModule(
@@ -183,21 +246,33 @@ async function hydrateComponent(
 
     if (cmpMeta != null) {
       waitingElements.add(elm);
+      const hostRef = getHostRef(this);
+      if (!hostRef) {
+        return;
+      }
+      addHostEventListeners(this, hostRef, cmpMeta.$listeners$, false);
+
       try {
         connectedCallback(elm);
-        await elm.componentOnReady();
 
-        results.hydratedCount++;
+        // race `componentOnReady` against the render finishing: if the
+        // render times out first, stop waiting rather than resuming this
+        // continuation once the window has been destroyed (see #6864).
+        const wasAborted = await Promise.race([elm.componentOnReady().then(() => false), aborted.then(() => true)]);
 
-        const ref = getHostRef(elm);
-        const modeName = !ref.$modeName$ ? '$' : ref.$modeName$;
-        if (!results.components.some((c) => c.tag === tagName && c.mode === modeName)) {
-          results.components.push({
-            tag: tagName,
-            mode: modeName,
-            count: 0,
-            depth: -1,
-          });
+        if (!wasAborted) {
+          results.hydratedCount++;
+
+          const ref = getHostRef(elm);
+          const modeName = !ref?.$modeName$ ? '$' : ref?.$modeName$;
+          if (!results.components.some((c) => c.tag === tagName && c.mode === modeName)) {
+            results.components.push({
+              tag: tagName,
+              mode: modeName,
+              count: 0,
+              depth: -1,
+            });
+          }
         }
       } catch (e) {
         win.console.error(e);
@@ -328,4 +403,42 @@ function waitingOnElementMsg(waitingElement: HTMLElement) {
 
 function waitingOnElementsMsg(waitingElements: Set<HTMLElement>) {
   return Array.from(waitingElements).map(waitingOnElementMsg);
+}
+
+/**
+ * Determines if the tag requires a declarative shadow dom
+ * or a scoped / light dom during SSR.
+ *
+ * @param tagName - component tag name
+ * @param opts - serializeShadowRoot options
+ * @returns `true` when the tag requires a scoped / light dom during SSR
+ */
+export function tagRequiresScoped(tagName: string, opts: d.HydrateFactoryOptions['serializeShadowRoot']) {
+  if (typeof opts === 'string') {
+    return opts === 'scoped';
+  }
+
+  if (typeof opts === 'boolean') {
+    return opts === true ? false : true;
+  }
+
+  if (typeof opts === 'object') {
+    tagName = tagName.toLowerCase();
+
+    if (Array.isArray(opts['declarative-shadow-dom']) && opts['declarative-shadow-dom'].includes(tagName)) {
+      // if the tag is in the dsd array, return dsd
+      return false;
+    } else if (
+      (!Array.isArray(opts.scoped) || !opts.scoped.includes(tagName)) &&
+      opts.default === 'declarative-shadow-dom'
+    ) {
+      // if the tag is not in the scoped array and the default is dsd, return dsd
+      return false;
+    } else {
+      // otherwise, return scoped
+      return true;
+    }
+  }
+
+  return false;
 }

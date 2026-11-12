@@ -5,7 +5,7 @@ Thanks for your interest in contributing to Stencil! 🎉
 
 ## Contributing Etiquette
 
-Please see our [Contributor Code of Conduct](https://github.com/ionic-team/stencil/blob/main/CODE_OF_CONDUCT.md) for information on our rules of conduct.
+Please see our [Contributor Code of Conduct](https://github.com/stenciljs/core/blob/main/CODE_OF_CONDUCT.md) for information on our rules of conduct.
 
 
 ## Reporting a Bug
@@ -18,10 +18,10 @@ Please see our [Contributor Code of Conduct](https://github.com/ionic-team/stenc
 
 * Issues with no clear steps to reproduce will not be triaged.
 
-* If you think you have found a bug, please start by making sure it hasn't already been [reported](https://github.com/ionic-team/stencil/issues?utf8=%E2%9C%93&q=is%3Aissue). You can search through existing issues to see if there is a similar one reported. Include closed issues as it may have been closed with a solution.
+* If you think you have found a bug, please start by making sure it hasn't already been [reported](https://github.com/stenciljs/core/issues?utf8=%E2%9C%93&q=is%3Aissue). You can search through existing issues to see if there is a similar one reported. Include closed issues as it may have been closed with a solution.
     * If a bug report already exists, please upvote it using the :+1: reaction on the GitHub Issue summary. The team is currently unable to track "+1" style comments on the issue.
 
-* Next, [create a new issue](https://github.com/ionic-team/stencil/issues/new) that thoroughly explains the problem.
+* Next, [create a new issue](https://github.com/stenciljs/core/issues/new) that thoroughly explains the problem.
     * Please fill out the issue form in full before submitting.
     * Please only include one bug per issue.
 
@@ -30,10 +30,10 @@ Please see our [Contributor Code of Conduct](https://github.com/ionic-team/stenc
 
 * If you have a question about using Stencil, please ask in the [Stencil Discord server](https://chat.stenciljs.com).
 
-* Before requesting a feature, please start by making sure it hasn't already been [proposed](https://github.com/ionic-team/stencil/issues?utf8=%E2%9C%93&q=is%3Aissue). You can search through existing GitHub issues to see if there is a similar feature request has been reported. Include closed feature requests, as it may have been closed already.
+* Before requesting a feature, please start by making sure it hasn't already been [proposed](https://github.com/stenciljs/core/issues?utf8=%E2%9C%93&q=is%3Aissue). You can search through existing GitHub issues to see if there is a similar feature request has been reported. Include closed feature requests, as it may have been closed already.
     * If a feature request already exists, please upvote it using the :+1: reaction on the GitHub Issue summary. The team is currently unable to track "+1" style comments on the issue.
 
-* Next, [create a new feature request]([https://github.com/ionic-team/stencil/issues/new](https://github.com/ionic-team/stencil/issues/new?assignees=&labels=&projects=&template=feature_request.yml&title=feat%3A+)) that thoroughly explains the feature request.
+* Next, [create a new feature request]([https://github.com/stenciljs/core/issues/new](https://github.com/stenciljs/core/issues/new?assignees=&labels=&projects=&template=feature_request.yml&title=feat%3A+)) that thoroughly explains the feature request.
     * Please fill out the feature request form in full before submitting.
     * Please only include one feature request per report.
 
@@ -51,7 +51,7 @@ Please see our [Contributor Code of Conduct](https://github.com/ionic-team/stenc
    1. There's no need to install a specific version of npm or Node right now, it shall be done automatically for you in
       the next step
 5. Run `npm ci`
-6. Run `npm install.jest` to install dependencies for Stencil's testing submodule
+6. Run `npm run install.jest` to install dependencies for Stencil's testing submodule
 
 
 ### Updates
@@ -79,7 +79,9 @@ Using `npm link` is beneficial to the development cycle in that consecutive buil
     "baseUrl": ".",
     "paths": {
       "@stencil/core/internal": ["node_modules/@stencil/core/internal"],
-      "@stencil/core/internal/*": ["node_modules/@stencil/core/internal/*"]
+      "@stencil/core/internal/*": ["node_modules/@stencil/core/internal/*"],
+      "@stencil/core/mock-doc": ["node_modules/@stencil/core/mock-doc"],
+      "@stencil/core/mock-doc/*": ["node_modules/@stencil/core/mock-doc/*"]
     }
   }
 }
@@ -93,6 +95,28 @@ Afterwards, to clean up:
     1. Run `npm unlink @stencil/core`
     2. Remove the modifications to your tsconfig.json
 2. In the directory of _stencil core_, run `npm unlink`
+
+> [!NOTE]  
+> Instead of linking, you can reference Stencil from a local directory in the `package.json` after updating your project's `tsconfig.json` file, e.g.
+> ```patch
+> diff --git a/package.json b/package.json
+> index 1a8320a..bb1fa3a 100644
+> --- a/package.json
+> +++ b/package.json
+> @@ -39,11 +39,12 @@
+>      "generate": "stencil generate"
+>    },
+>    "devDependencies": {
+> -    "@stencil/core": "^4.7.0",
+> +    "@stencil/core": "file:/path/to/local/stencil",
+>      "@types/jest": "^29.5.6",
+>      "@types/node": "^16.18.11",
+>      "jest": "^29.7.0",
+>      "jest-cli": "^29.7.0",
+>      "puppeteer": "^21.9.0"
+>    },
+>    "license": "MIT"
+> ```
 
 #### Testing with `npm pack`:
 
@@ -255,24 +279,10 @@ where:
 - the PR body describes _what_ and _why_, rather than _how_
 - this PR is a breaking change
 
-which generates the following in the `CHANGELOG.md`:
-
-```markdown
-### Bug Fixes
-
-* **runtime:** prevent watchers from prematurely firing in custom elements build ([#2971](https://github.com/ionic-team/stencil/issues/2971)) ([8c375bd](https://github.com/ionic-team/stencil/commit/8c375bd4bc1b55e269db69af542fa404714c9b26))
-
-
-### BREAKING CHANGES
-
-* **runtime:** Watchers may appear to not fire in existing applications, when this is the expected behavior.
-```
-
 ### Adding & Updating Documentation
 
-Please see the [stencil-site](https://github.com/ionic-team/stencil-site) repo to update documentation.
-
+Please see the [stencil-site](https://github.com/stenciljs/site) repo to update documentation.
 
 ## License
 
-By contributing your code to the ionic-team/stencil GitHub Repository, you agree to license your contribution under the MIT license.
+By contributing your code to this GitHub Repository, you agree to license your contribution under the MIT license.

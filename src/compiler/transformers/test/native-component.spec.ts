@@ -1,5 +1,6 @@
+import * as ts from 'typescript';
 import * as d from '@stencil/core/declarations';
-import { mockCompilerCtx } from '@stencil/core/testing';
+import { mockBuildCtx } from '@stencil/core/testing';
 
 import { nativeComponentTransform } from '../component-native/tranform-to-native-component';
 import { transpileModule } from './transpile';
@@ -7,10 +8,12 @@ import { c, formatCode } from './utils';
 
 describe('nativeComponentTransform', () => {
   let compilerCtx: d.CompilerCtx;
+  let buildCtx: d.BuildCtx;
   let transformOpts: d.TransformOptions;
 
   beforeEach(() => {
-    compilerCtx = mockCompilerCtx();
+    buildCtx = mockBuildCtx();
+    compilerCtx = buildCtx.compilerCtx;
     transformOpts = {
       coreImportPath: '@stencil/core',
       componentExport: 'customelement',
@@ -31,7 +34,7 @@ describe('nativeComponentTransform', () => {
     }
     `;
 
-    const transformer = nativeComponentTransform(compilerCtx, transformOpts);
+    const transformer = nativeComponentTransform(compilerCtx, transformOpts, buildCtx);
     const transpiledModule = transpileModule(code, null, compilerCtx, [], [transformer]);
 
     expect(await formatCode(transpiledModule.outputText)).toBe(
@@ -41,7 +44,60 @@ describe('nativeComponentTransform', () => {
             return 'cmp-a';
           }
         };
-        customElements.define("cmp-a", CmpA);`,
+        customElements.define(__stencil_transformTag("cmp-a"), CmpA);`,
+    );
+  });
+
+  it('passes false to super of stencil decorated class calls', async () => {
+    const code = `
+    class PlainClass {
+      @Prop() baz: number;
+    }
+    @Component({
+      tag: 'cmp-b',
+    })
+    export class CmpB extends PlainClass {
+      @Prop() bar: number;
+    }
+    @Component({
+      tag: 'cmp-a',
+    })
+    export class CmpA extends CmpB {
+      @Prop() foo: number;
+    }
+    `;
+
+    const transformer = nativeComponentTransform(compilerCtx, transformOpts, buildCtx);
+    const transpiledModule = transpileModule(code, null, compilerCtx, [], [transformer], [], {
+      target: ts.ScriptTarget.ESNext,
+    });
+
+    expect(await formatCode(transpiledModule.outputText)).toContain(
+      await c`__stencil_defineCustomElement(CmpA, [512, 'cmp-a', { baz: [2], bar: [2], foo: [2] }])`,
+    );
+
+    expect(await formatCode(transpiledModule.outputText)).toContain(
+      await c`const CmpB = class extends PlainClass {
+        constructor(registerHost) {
+          super(false);
+          if (registerHost !== false) {
+            this.__registerHost();
+          }
+        }
+        bar;
+      };`,
+    );
+
+    expect(await formatCode(transpiledModule.outputText)).toContain(
+      await c`const CmpA = class extends CmpB {
+        constructor(registerHost) {
+          super(false);
+          if (registerHost !== false) {
+            this.__registerHost();
+          }
+        }
+        foo;
+      };`,
     );
   });
 
@@ -57,11 +113,11 @@ describe('nativeComponentTransform', () => {
           }
         `;
 
-      const transformer = nativeComponentTransform(compilerCtx, transformOpts);
+      const transformer = nativeComponentTransform(compilerCtx, transformOpts, buildCtx);
       const transpiledModule = transpileModule(code, null, compilerCtx, [], [transformer]);
 
       expect(transpiledModule.outputText).toContain(
-        `import { defineCustomElement as __stencil_defineCustomElement, HTMLElement } from "@stencil/core";`,
+        `import { transformTag as __stencil_transformTag, defineCustomElement as __stencil_defineCustomElement, HTMLElement } from "@stencil/core";`,
       );
       expect(transpiledModule.outputText).toContain(`this.__attachShadow()`);
     });
@@ -81,12 +137,12 @@ describe('nativeComponentTransform', () => {
           }
         `;
 
-      const transformer = nativeComponentTransform(compilerCtx, transformOpts);
+      const transformer = nativeComponentTransform(compilerCtx, transformOpts, buildCtx);
 
       const transpiledModule = transpileModule(code, null, compilerCtx, [], [transformer]);
 
       expect(transpiledModule.outputText).toContain(
-        `import { defineCustomElement as __stencil_defineCustomElement, HTMLElement } from "@stencil/core";`,
+        `import { transformTag as __stencil_transformTag, defineCustomElement as __stencil_defineCustomElement, HTMLElement } from "@stencil/core";`,
       );
       expect(transpiledModule.outputText).toContain(`this.__attachShadow()`);
     });
@@ -101,7 +157,7 @@ describe('nativeComponentTransform', () => {
         }
       `;
 
-      const transformer = nativeComponentTransform(compilerCtx, transformOpts);
+      const transformer = nativeComponentTransform(compilerCtx, transformOpts, buildCtx);
 
       const transpiledModule = transpileModule(code, null, compilerCtx, [], [transformer]);
 
@@ -120,16 +176,18 @@ describe('nativeComponentTransform', () => {
         }
       `;
 
-      const transformer = nativeComponentTransform(compilerCtx, transformOpts);
+      const transformer = nativeComponentTransform(compilerCtx, transformOpts, buildCtx);
 
       const transpiledModule = transpileModule(code, null, compilerCtx, [], [transformer]);
       await formatCode(transpiledModule.outputText);
 
       expect(await formatCode(transpiledModule.outputText)).toContain(
         await c`const CmpA = class extends HTMLElement {
-          constructor() {
+          constructor(registerHost) {
             super();
-            this.__registerHost();
+            if (registerHost !== false) {
+              this.__registerHost();
+            }
           }
           static get formAssociated() {
             return true;
@@ -148,15 +206,17 @@ describe('nativeComponentTransform', () => {
         }
       `;
 
-      const transformer = nativeComponentTransform(compilerCtx, transformOpts);
+      const transformer = nativeComponentTransform(compilerCtx, transformOpts, buildCtx);
 
       const transpiledModule = transpileModule(code, null, compilerCtx, [], [transformer]);
 
       expect(await formatCode(transpiledModule.outputText)).toContain(
         await c`const CmpA = class extends HTMLElement {
-          constructor() {
+          constructor(registerHost) {
             super();
-            this.__registerHost();
+            if (registerHost !== false) {
+              this.__registerHost();
+            }
             this.internals = this.attachInternals();
           }
           static get formAssociated() {
@@ -169,18 +229,18 @@ describe('nativeComponentTransform', () => {
 
   describe('static style property', () => {
     it.each([
-      [`styleUrl: 'cmp-a.css'`, `import CmpAStyle0 from './cmp-a.css?tag=cmp-a';`, `CmpAStyle0`],
+      [`styleUrl: 'cmp-a.css'`, `import CmpAStyle0 from './cmp-a.css?tag=cmp-a';`, `CmpAStyle0()`],
       [
         `styleUrls: ['cmp-a.css', 'cmp-b.css', 'cmp-a.css']`,
         `import CmpAStyle0 from './cmp-b.css?tag=cmp-a';
          import CmpAStyle1 from './cmp-a.css?tag=cmp-a';`,
-        `CmpAStyle0 + CmpAStyle1`,
+        `CmpAStyle0() + CmpAStyle1()`,
       ],
       [
         `styleUrls: { ios: 'cmp-a.ios.css', md: 'cmp-a.md.css' }`,
         `import CmpAIosStyle0 from './cmp-a.ios.css?tag=cmp-a&mode=ios';
         import CmpAMdStyle0 from './cmp-a.md.css?tag=cmp-a&mode=md';`,
-        `{ ios: CmpAIosStyle0, md: CmpAMdStyle0 }`,
+        `{ ios: CmpAIosStyle0(), md: CmpAMdStyle0() }`,
       ],
     ])('adds a static style property when %s', async (styleConfig, expectedImport, expectedStyleReturn) => {
       const code = `
@@ -190,16 +250,22 @@ describe('nativeComponentTransform', () => {
         }
         export class CmpA {}
       `;
-      const transformer = nativeComponentTransform(compilerCtx, transformOpts);
+      const transformer = nativeComponentTransform(compilerCtx, transformOpts, buildCtx);
       const transpiledModule = transpileModule(code, null, compilerCtx, [], [transformer]);
 
       expect(await formatCode(transpiledModule.outputText)).toContain(
-        await formatCode(`import { defineCustomElement as __stencil_defineCustomElement, HTMLElement } from '@stencil/core';
+        await formatCode(`import { 
+          transformTag as __stencil_transformTag, 
+          defineCustomElement as __stencil_defineCustomElement, 
+          HTMLElement 
+        } from '@stencil/core';
           ${expectedImport}
           const CmpA = class extends HTMLElement {
-            constructor() {
+            constructor(registerHost) {
               super();
-              this.__registerHost();
+              if (registerHost !== false) {
+                this.__registerHost();
+              }
             }
             static get style() {
               return ${expectedStyleReturn};

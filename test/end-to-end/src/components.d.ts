@@ -8,6 +8,16 @@ import { HTMLStencilElement, JSXBase } from "@stencil/core/internal";
 import { CarData } from "./car-list/car-data";
 export { CarData } from "./car-list/car-data";
 export namespace Components {
+    interface AnotherCarDetail {
+        "car": CarData;
+    }
+    /**
+     * Component that helps display a list of cars
+     */
+    interface AnotherCarList {
+        "cars": CarData[];
+        "selected": CarData;
+    }
     interface AppRoot {
     }
     interface BuildData {
@@ -28,11 +38,25 @@ export namespace Components {
     }
     interface CmpC {
     }
+    interface CmpDsd {
+        /**
+          * @default 0
+         */
+        "initialCounter": number;
+    }
+    interface CmpDsdFocus {
+    }
+    interface CmpServerVsClient {
+    }
+    interface CmpWithSlot {
+    }
     interface DomApi {
     }
     interface DomInteraction {
     }
     interface DomVisible {
+    }
+    interface DsdListenCmp {
     }
     interface ElementCmp {
     }
@@ -45,9 +69,10 @@ export namespace Components {
     interface EventCmp {
         /**
           * this is some method that fires an event with options
+          * @param mph some value
           * @returns
          */
-        "methodThatFiresEventWithOptions": () => Promise<void>;
+        "methodThatFiresEventWithOptions": (mph: number) => Promise<void>;
         /**
           * this is some method that fires a document event
           * @returns
@@ -60,9 +85,14 @@ export namespace Components {
          */
         "methodThatFiresMyWindowEvent": (value: number) => Promise<void>;
     }
+    interface HydratedSiblingAccessors {
+    }
     interface ImportAssets {
     }
     interface ListenCmp {
+        /**
+          * @default false
+         */
         "opened": boolean;
     }
     interface MethodCmp {
@@ -78,19 +108,116 @@ export namespace Components {
           * @returns some string
          */
         "someMethodWithArgs": (unit: string, value: number) => Promise<string>;
+        /**
+          * @default 0
+         */
         "someProp": number;
+    }
+    interface MyCmp {
+        /**
+          * bar prop
+          * @returns bar
+          * @readonly 
+          * @default 'bar'
+         */
+        "barProp": string;
+        /**
+          * foo prop
+         */
+        "fooProp": string;
+        /**
+          * Mode
+         */
+        "mode"?: any;
+    }
+    interface MyJsxCmp {
+        /**
+          * bar prop
+          * @returns bar
+          * @readonly 
+          * @default 'bar'
+         */
+        "barProp": string;
+        /**
+          * foo prop
+         */
+        "fooProp": string;
+        /**
+          * Mode
+         */
+        "mode"?: any;
+    }
+    interface NestedCmpChild {
+    }
+    interface NestedCmpParent {
+    }
+    interface NestedScopeCmp {
+    }
+    interface NonShadowChild {
+    }
+    interface NonShadowForwardedSlot {
+    }
+    interface NonShadowMultiSlots {
+    }
+    interface NonShadowWrapper {
+    }
+    /**
+     * Used by hydrate-timeout.e2e.ts to verify the AbortController shim: a
+     * component that creates its own AbortController has that controller cascade-aborted
+     * automatically when the render times out
+     * The outcome is reported via `global` (not observable through
+     * renderToString's result) so the test can assert on it.
+     */
+    interface OwnControllerCmp {
     }
     interface PathAliasCmp {
     }
     interface PrerenderCmp {
     }
     interface PropCmp {
+        /**
+          * @default 'life preservers'
+         */
+        "clothes": string;
         "first": string;
+        /**
+          * @readonly
+         */
+        "fullName": string;
         "lastName": string;
         /**
           * Mode
          */
         "mode"?: any;
+    }
+    interface ResolveVarEvents {
+        "emitMyEvent": () => Promise<void>;
+        "emitOtherEvent": () => Promise<void>;
+    }
+    interface RuntimeDecorators {
+        /**
+          * @default 'basicProp'
+         */
+        "basicProp": string;
+        "decoratedGetterSetterProp": number;
+        /**
+          * @default -10
+         */
+        "decoratedProp": number;
+    }
+    interface ScopedCarDetail {
+        "car": CarData;
+    }
+    /**
+     * Component that helps display a list of cars
+     */
+    interface ScopedCarList {
+        "cars": CarData[];
+        "selected": CarData;
+    }
+    interface ShadowChild {
+    }
+    interface ShadowWrapper {
     }
     interface SlotCmp {
     }
@@ -99,8 +226,26 @@ export namespace Components {
     interface SlotParentCmp {
         "label": string;
     }
+    /**
+     * Used by hydrate-timeout.e2e.ts to reproduce stenciljs/core#6864: a
+     * component whose `componentWillLoad` is still awaiting `fetch()` when the
+     * render's `opts.timeout` fires.
+     */
+    interface SlowFetchCmp {
+        "url": string;
+    }
+    interface SsrShadowCmp {
+        "selected": boolean;
+    }
     interface StateCmp {
     }
+    interface WrapSsrShadowCmp {
+        "selected": boolean;
+    }
+}
+export interface AnotherCarListCustomEvent<T> extends CustomEvent<T> {
+    detail: T;
+    target: HTMLAnotherCarListElement;
 }
 export interface CarListCustomEvent<T> extends CustomEvent<T> {
     detail: T;
@@ -110,7 +255,41 @@ export interface EventCmpCustomEvent<T> extends CustomEvent<T> {
     detail: T;
     target: HTMLEventCmpElement;
 }
+export interface ResolveVarEventsCustomEvent<T> extends CustomEvent<T> {
+    detail: T;
+    target: HTMLResolveVarEventsElement;
+}
+export interface ScopedCarListCustomEvent<T> extends CustomEvent<T> {
+    detail: T;
+    target: HTMLScopedCarListElement;
+}
 declare global {
+    interface HTMLAnotherCarDetailElement extends Components.AnotherCarDetail, HTMLStencilElement {
+    }
+    var HTMLAnotherCarDetailElement: {
+        prototype: HTMLAnotherCarDetailElement;
+        new (): HTMLAnotherCarDetailElement;
+    };
+    interface HTMLAnotherCarListElementEventMap {
+        "carSelected": CarData;
+    }
+    /**
+     * Component that helps display a list of cars
+     */
+    interface HTMLAnotherCarListElement extends Components.AnotherCarList, HTMLStencilElement {
+        addEventListener<K extends keyof HTMLAnotherCarListElementEventMap>(type: K, listener: (this: HTMLAnotherCarListElement, ev: AnotherCarListCustomEvent<HTMLAnotherCarListElementEventMap[K]>) => any, options?: boolean | AddEventListenerOptions): void;
+        addEventListener<K extends keyof DocumentEventMap>(type: K, listener: (this: Document, ev: DocumentEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
+        addEventListener<K extends keyof HTMLElementEventMap>(type: K, listener: (this: HTMLElement, ev: HTMLElementEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
+        addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
+        removeEventListener<K extends keyof HTMLAnotherCarListElementEventMap>(type: K, listener: (this: HTMLAnotherCarListElement, ev: AnotherCarListCustomEvent<HTMLAnotherCarListElementEventMap[K]>) => any, options?: boolean | EventListenerOptions): void;
+        removeEventListener<K extends keyof DocumentEventMap>(type: K, listener: (this: Document, ev: DocumentEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
+        removeEventListener<K extends keyof HTMLElementEventMap>(type: K, listener: (this: HTMLElement, ev: HTMLElementEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
+        removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void;
+    }
+    var HTMLAnotherCarListElement: {
+        prototype: HTMLAnotherCarListElement;
+        new (): HTMLAnotherCarListElement;
+    };
     interface HTMLAppRootElement extends Components.AppRoot, HTMLStencilElement {
     }
     var HTMLAppRootElement: {
@@ -167,6 +346,30 @@ declare global {
         prototype: HTMLCmpCElement;
         new (): HTMLCmpCElement;
     };
+    interface HTMLCmpDsdElement extends Components.CmpDsd, HTMLStencilElement {
+    }
+    var HTMLCmpDsdElement: {
+        prototype: HTMLCmpDsdElement;
+        new (): HTMLCmpDsdElement;
+    };
+    interface HTMLCmpDsdFocusElement extends Components.CmpDsdFocus, HTMLStencilElement {
+    }
+    var HTMLCmpDsdFocusElement: {
+        prototype: HTMLCmpDsdFocusElement;
+        new (): HTMLCmpDsdFocusElement;
+    };
+    interface HTMLCmpServerVsClientElement extends Components.CmpServerVsClient, HTMLStencilElement {
+    }
+    var HTMLCmpServerVsClientElement: {
+        prototype: HTMLCmpServerVsClientElement;
+        new (): HTMLCmpServerVsClientElement;
+    };
+    interface HTMLCmpWithSlotElement extends Components.CmpWithSlot, HTMLStencilElement {
+    }
+    var HTMLCmpWithSlotElement: {
+        prototype: HTMLCmpWithSlotElement;
+        new (): HTMLCmpWithSlotElement;
+    };
     interface HTMLDomApiElement extends Components.DomApi, HTMLStencilElement {
     }
     var HTMLDomApiElement: {
@@ -184,6 +387,12 @@ declare global {
     var HTMLDomVisibleElement: {
         prototype: HTMLDomVisibleElement;
         new (): HTMLDomVisibleElement;
+    };
+    interface HTMLDsdListenCmpElement extends Components.DsdListenCmp, HTMLStencilElement {
+    }
+    var HTMLDsdListenCmpElement: {
+        prototype: HTMLDsdListenCmpElement;
+        new (): HTMLDsdListenCmpElement;
     };
     interface HTMLElementCmpElement extends Components.ElementCmp, HTMLStencilElement {
     }
@@ -228,6 +437,12 @@ declare global {
         prototype: HTMLEventCmpElement;
         new (): HTMLEventCmpElement;
     };
+    interface HTMLHydratedSiblingAccessorsElement extends Components.HydratedSiblingAccessors, HTMLStencilElement {
+    }
+    var HTMLHydratedSiblingAccessorsElement: {
+        prototype: HTMLHydratedSiblingAccessorsElement;
+        new (): HTMLHydratedSiblingAccessorsElement;
+    };
     interface HTMLImportAssetsElement extends Components.ImportAssets, HTMLStencilElement {
     }
     var HTMLImportAssetsElement: {
@@ -245,6 +460,73 @@ declare global {
     var HTMLMethodCmpElement: {
         prototype: HTMLMethodCmpElement;
         new (): HTMLMethodCmpElement;
+    };
+    interface HTMLMyCmpElement extends Components.MyCmp, HTMLStencilElement {
+    }
+    var HTMLMyCmpElement: {
+        prototype: HTMLMyCmpElement;
+        new (): HTMLMyCmpElement;
+    };
+    interface HTMLMyJsxCmpElement extends Components.MyJsxCmp, HTMLStencilElement {
+    }
+    var HTMLMyJsxCmpElement: {
+        prototype: HTMLMyJsxCmpElement;
+        new (): HTMLMyJsxCmpElement;
+    };
+    interface HTMLNestedCmpChildElement extends Components.NestedCmpChild, HTMLStencilElement {
+    }
+    var HTMLNestedCmpChildElement: {
+        prototype: HTMLNestedCmpChildElement;
+        new (): HTMLNestedCmpChildElement;
+    };
+    interface HTMLNestedCmpParentElement extends Components.NestedCmpParent, HTMLStencilElement {
+    }
+    var HTMLNestedCmpParentElement: {
+        prototype: HTMLNestedCmpParentElement;
+        new (): HTMLNestedCmpParentElement;
+    };
+    interface HTMLNestedScopeCmpElement extends Components.NestedScopeCmp, HTMLStencilElement {
+    }
+    var HTMLNestedScopeCmpElement: {
+        prototype: HTMLNestedScopeCmpElement;
+        new (): HTMLNestedScopeCmpElement;
+    };
+    interface HTMLNonShadowChildElement extends Components.NonShadowChild, HTMLStencilElement {
+    }
+    var HTMLNonShadowChildElement: {
+        prototype: HTMLNonShadowChildElement;
+        new (): HTMLNonShadowChildElement;
+    };
+    interface HTMLNonShadowForwardedSlotElement extends Components.NonShadowForwardedSlot, HTMLStencilElement {
+    }
+    var HTMLNonShadowForwardedSlotElement: {
+        prototype: HTMLNonShadowForwardedSlotElement;
+        new (): HTMLNonShadowForwardedSlotElement;
+    };
+    interface HTMLNonShadowMultiSlotsElement extends Components.NonShadowMultiSlots, HTMLStencilElement {
+    }
+    var HTMLNonShadowMultiSlotsElement: {
+        prototype: HTMLNonShadowMultiSlotsElement;
+        new (): HTMLNonShadowMultiSlotsElement;
+    };
+    interface HTMLNonShadowWrapperElement extends Components.NonShadowWrapper, HTMLStencilElement {
+    }
+    var HTMLNonShadowWrapperElement: {
+        prototype: HTMLNonShadowWrapperElement;
+        new (): HTMLNonShadowWrapperElement;
+    };
+    /**
+     * Used by hydrate-timeout.e2e.ts to verify the AbortController shim: a
+     * component that creates its own AbortController has that controller cascade-aborted
+     * automatically when the render times out
+     * The outcome is reported via `global` (not observable through
+     * renderToString's result) so the test can assert on it.
+     */
+    interface HTMLOwnControllerCmpElement extends Components.OwnControllerCmp, HTMLStencilElement {
+    }
+    var HTMLOwnControllerCmpElement: {
+        prototype: HTMLOwnControllerCmpElement;
+        new (): HTMLOwnControllerCmpElement;
     };
     interface HTMLPathAliasCmpElement extends Components.PathAliasCmp, HTMLStencilElement {
     }
@@ -264,6 +546,68 @@ declare global {
         prototype: HTMLPropCmpElement;
         new (): HTMLPropCmpElement;
     };
+    interface HTMLResolveVarEventsElementEventMap {
+        "myEvent": any;
+        "otherEvent": any;
+    }
+    interface HTMLResolveVarEventsElement extends Components.ResolveVarEvents, HTMLStencilElement {
+        addEventListener<K extends keyof HTMLResolveVarEventsElementEventMap>(type: K, listener: (this: HTMLResolveVarEventsElement, ev: ResolveVarEventsCustomEvent<HTMLResolveVarEventsElementEventMap[K]>) => any, options?: boolean | AddEventListenerOptions): void;
+        addEventListener<K extends keyof DocumentEventMap>(type: K, listener: (this: Document, ev: DocumentEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
+        addEventListener<K extends keyof HTMLElementEventMap>(type: K, listener: (this: HTMLElement, ev: HTMLElementEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
+        addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
+        removeEventListener<K extends keyof HTMLResolveVarEventsElementEventMap>(type: K, listener: (this: HTMLResolveVarEventsElement, ev: ResolveVarEventsCustomEvent<HTMLResolveVarEventsElementEventMap[K]>) => any, options?: boolean | EventListenerOptions): void;
+        removeEventListener<K extends keyof DocumentEventMap>(type: K, listener: (this: Document, ev: DocumentEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
+        removeEventListener<K extends keyof HTMLElementEventMap>(type: K, listener: (this: HTMLElement, ev: HTMLElementEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
+        removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void;
+    }
+    var HTMLResolveVarEventsElement: {
+        prototype: HTMLResolveVarEventsElement;
+        new (): HTMLResolveVarEventsElement;
+    };
+    interface HTMLRuntimeDecoratorsElement extends Components.RuntimeDecorators, HTMLStencilElement {
+    }
+    var HTMLRuntimeDecoratorsElement: {
+        prototype: HTMLRuntimeDecoratorsElement;
+        new (): HTMLRuntimeDecoratorsElement;
+    };
+    interface HTMLScopedCarDetailElement extends Components.ScopedCarDetail, HTMLStencilElement {
+    }
+    var HTMLScopedCarDetailElement: {
+        prototype: HTMLScopedCarDetailElement;
+        new (): HTMLScopedCarDetailElement;
+    };
+    interface HTMLScopedCarListElementEventMap {
+        "carSelected": CarData;
+    }
+    /**
+     * Component that helps display a list of cars
+     */
+    interface HTMLScopedCarListElement extends Components.ScopedCarList, HTMLStencilElement {
+        addEventListener<K extends keyof HTMLScopedCarListElementEventMap>(type: K, listener: (this: HTMLScopedCarListElement, ev: ScopedCarListCustomEvent<HTMLScopedCarListElementEventMap[K]>) => any, options?: boolean | AddEventListenerOptions): void;
+        addEventListener<K extends keyof DocumentEventMap>(type: K, listener: (this: Document, ev: DocumentEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
+        addEventListener<K extends keyof HTMLElementEventMap>(type: K, listener: (this: HTMLElement, ev: HTMLElementEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
+        addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
+        removeEventListener<K extends keyof HTMLScopedCarListElementEventMap>(type: K, listener: (this: HTMLScopedCarListElement, ev: ScopedCarListCustomEvent<HTMLScopedCarListElementEventMap[K]>) => any, options?: boolean | EventListenerOptions): void;
+        removeEventListener<K extends keyof DocumentEventMap>(type: K, listener: (this: Document, ev: DocumentEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
+        removeEventListener<K extends keyof HTMLElementEventMap>(type: K, listener: (this: HTMLElement, ev: HTMLElementEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
+        removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void;
+    }
+    var HTMLScopedCarListElement: {
+        prototype: HTMLScopedCarListElement;
+        new (): HTMLScopedCarListElement;
+    };
+    interface HTMLShadowChildElement extends Components.ShadowChild, HTMLStencilElement {
+    }
+    var HTMLShadowChildElement: {
+        prototype: HTMLShadowChildElement;
+        new (): HTMLShadowChildElement;
+    };
+    interface HTMLShadowWrapperElement extends Components.ShadowWrapper, HTMLStencilElement {
+    }
+    var HTMLShadowWrapperElement: {
+        prototype: HTMLShadowWrapperElement;
+        new (): HTMLShadowWrapperElement;
+    };
     interface HTMLSlotCmpElement extends Components.SlotCmp, HTMLStencilElement {
     }
     var HTMLSlotCmpElement: {
@@ -282,13 +626,38 @@ declare global {
         prototype: HTMLSlotParentCmpElement;
         new (): HTMLSlotParentCmpElement;
     };
+    /**
+     * Used by hydrate-timeout.e2e.ts to reproduce stenciljs/core#6864: a
+     * component whose `componentWillLoad` is still awaiting `fetch()` when the
+     * render's `opts.timeout` fires.
+     */
+    interface HTMLSlowFetchCmpElement extends Components.SlowFetchCmp, HTMLStencilElement {
+    }
+    var HTMLSlowFetchCmpElement: {
+        prototype: HTMLSlowFetchCmpElement;
+        new (): HTMLSlowFetchCmpElement;
+    };
+    interface HTMLSsrShadowCmpElement extends Components.SsrShadowCmp, HTMLStencilElement {
+    }
+    var HTMLSsrShadowCmpElement: {
+        prototype: HTMLSsrShadowCmpElement;
+        new (): HTMLSsrShadowCmpElement;
+    };
     interface HTMLStateCmpElement extends Components.StateCmp, HTMLStencilElement {
     }
     var HTMLStateCmpElement: {
         prototype: HTMLStateCmpElement;
         new (): HTMLStateCmpElement;
     };
+    interface HTMLWrapSsrShadowCmpElement extends Components.WrapSsrShadowCmp, HTMLStencilElement {
+    }
+    var HTMLWrapSsrShadowCmpElement: {
+        prototype: HTMLWrapSsrShadowCmpElement;
+        new (): HTMLWrapSsrShadowCmpElement;
+    };
     interface HTMLElementTagNameMap {
+        "another-car-detail": HTMLAnotherCarDetailElement;
+        "another-car-list": HTMLAnotherCarListElement;
         "app-root": HTMLAppRootElement;
         "build-data": HTMLBuildDataElement;
         "car-detail": HTMLCarDetailElement;
@@ -296,27 +665,63 @@ declare global {
         "cmp-a": HTMLCmpAElement;
         "cmp-b": HTMLCmpBElement;
         "cmp-c": HTMLCmpCElement;
+        "cmp-dsd": HTMLCmpDsdElement;
+        "cmp-dsd-focus": HTMLCmpDsdFocusElement;
+        "cmp-server-vs-client": HTMLCmpServerVsClientElement;
+        "cmp-with-slot": HTMLCmpWithSlotElement;
         "dom-api": HTMLDomApiElement;
         "dom-interaction": HTMLDomInteractionElement;
         "dom-visible": HTMLDomVisibleElement;
+        "dsd-listen-cmp": HTMLDsdListenCmpElement;
         "element-cmp": HTMLElementCmpElement;
         "empty-cmp": HTMLEmptyCmpElement;
         "empty-cmp-shadow": HTMLEmptyCmpShadowElement;
         "env-data": HTMLEnvDataElement;
         "event-cmp": HTMLEventCmpElement;
+        "hydrated-sibling-accessors": HTMLHydratedSiblingAccessorsElement;
         "import-assets": HTMLImportAssetsElement;
         "listen-cmp": HTMLListenCmpElement;
         "method-cmp": HTMLMethodCmpElement;
+        "my-cmp": HTMLMyCmpElement;
+        "my-jsx-cmp": HTMLMyJsxCmpElement;
+        "nested-cmp-child": HTMLNestedCmpChildElement;
+        "nested-cmp-parent": HTMLNestedCmpParentElement;
+        "nested-scope-cmp": HTMLNestedScopeCmpElement;
+        "non-shadow-child": HTMLNonShadowChildElement;
+        "non-shadow-forwarded-slot": HTMLNonShadowForwardedSlotElement;
+        "non-shadow-multi-slots": HTMLNonShadowMultiSlotsElement;
+        "non-shadow-wrapper": HTMLNonShadowWrapperElement;
+        "own-controller-cmp": HTMLOwnControllerCmpElement;
         "path-alias-cmp": HTMLPathAliasCmpElement;
         "prerender-cmp": HTMLPrerenderCmpElement;
         "prop-cmp": HTMLPropCmpElement;
+        "resolve-var-events": HTMLResolveVarEventsElement;
+        "runtime-decorators": HTMLRuntimeDecoratorsElement;
+        "scoped-car-detail": HTMLScopedCarDetailElement;
+        "scoped-car-list": HTMLScopedCarListElement;
+        "shadow-child": HTMLShadowChildElement;
+        "shadow-wrapper": HTMLShadowWrapperElement;
         "slot-cmp": HTMLSlotCmpElement;
         "slot-cmp-container": HTMLSlotCmpContainerElement;
         "slot-parent-cmp": HTMLSlotParentCmpElement;
+        "slow-fetch-cmp": HTMLSlowFetchCmpElement;
+        "ssr-shadow-cmp": HTMLSsrShadowCmpElement;
         "state-cmp": HTMLStateCmpElement;
+        "wrap-ssr-shadow-cmp": HTMLWrapSsrShadowCmpElement;
     }
 }
 declare namespace LocalJSX {
+    interface AnotherCarDetail {
+        "car"?: CarData;
+    }
+    /**
+     * Component that helps display a list of cars
+     */
+    interface AnotherCarList {
+        "cars"?: CarData[];
+        "onCarSelected"?: (event: AnotherCarListCustomEvent<CarData>) => void;
+        "selected"?: CarData;
+    }
     interface AppRoot {
     }
     interface BuildData {
@@ -338,11 +743,25 @@ declare namespace LocalJSX {
     }
     interface CmpC {
     }
+    interface CmpDsd {
+        /**
+          * @default 0
+         */
+        "initialCounter"?: number;
+    }
+    interface CmpDsdFocus {
+    }
+    interface CmpServerVsClient {
+    }
+    interface CmpWithSlot {
+    }
     interface DomApi {
     }
     interface DomInteraction {
     }
     interface DomVisible {
+    }
+    interface DsdListenCmp {
     }
     interface ElementCmp {
     }
@@ -357,25 +776,128 @@ declare namespace LocalJSX {
         "onMyDocumentEvent"?: (event: EventCmpCustomEvent<any>) => void;
         "onMyWindowEvent"?: (event: EventCmpCustomEvent<number>) => void;
     }
+    interface HydratedSiblingAccessors {
+    }
     interface ImportAssets {
     }
     interface ListenCmp {
+        /**
+          * @default false
+         */
         "opened"?: boolean;
     }
     interface MethodCmp {
+        /**
+          * @default 0
+         */
         "someProp"?: number;
+    }
+    interface MyCmp {
+        /**
+          * bar prop
+          * @returns bar
+          * @readonly 
+          * @default 'bar'
+         */
+        "barProp"?: string;
+        /**
+          * foo prop
+         */
+        "fooProp"?: string;
+        /**
+          * Mode
+         */
+        "mode"?: any;
+    }
+    interface MyJsxCmp {
+        /**
+          * bar prop
+          * @returns bar
+          * @readonly 
+          * @default 'bar'
+         */
+        "barProp"?: string;
+        /**
+          * foo prop
+         */
+        "fooProp"?: string;
+        /**
+          * Mode
+         */
+        "mode"?: any;
+    }
+    interface NestedCmpChild {
+    }
+    interface NestedCmpParent {
+    }
+    interface NestedScopeCmp {
+    }
+    interface NonShadowChild {
+    }
+    interface NonShadowForwardedSlot {
+    }
+    interface NonShadowMultiSlots {
+    }
+    interface NonShadowWrapper {
+    }
+    /**
+     * Used by hydrate-timeout.e2e.ts to verify the AbortController shim: a
+     * component that creates its own AbortController has that controller cascade-aborted
+     * automatically when the render times out
+     * The outcome is reported via `global` (not observable through
+     * renderToString's result) so the test can assert on it.
+     */
+    interface OwnControllerCmp {
     }
     interface PathAliasCmp {
     }
     interface PrerenderCmp {
     }
     interface PropCmp {
+        /**
+          * @default 'life preservers'
+         */
+        "clothes"?: string;
         "first"?: string;
+        /**
+          * @readonly
+         */
+        "fullName"?: string;
         "lastName"?: string;
         /**
           * Mode
          */
         "mode"?: any;
+    }
+    interface ResolveVarEvents {
+        "onMyEvent"?: (event: ResolveVarEventsCustomEvent<any>) => void;
+        "onOtherEvent"?: (event: ResolveVarEventsCustomEvent<any>) => void;
+    }
+    interface RuntimeDecorators {
+        /**
+          * @default 'basicProp'
+         */
+        "basicProp"?: string;
+        "decoratedGetterSetterProp"?: number;
+        /**
+          * @default -10
+         */
+        "decoratedProp"?: number;
+    }
+    interface ScopedCarDetail {
+        "car"?: CarData;
+    }
+    /**
+     * Component that helps display a list of cars
+     */
+    interface ScopedCarList {
+        "cars"?: CarData[];
+        "onCarSelected"?: (event: ScopedCarListCustomEvent<CarData>) => void;
+        "selected"?: CarData;
+    }
+    interface ShadowChild {
+    }
+    interface ShadowWrapper {
     }
     interface SlotCmp {
     }
@@ -384,68 +906,214 @@ declare namespace LocalJSX {
     interface SlotParentCmp {
         "label"?: string;
     }
+    /**
+     * Used by hydrate-timeout.e2e.ts to reproduce stenciljs/core#6864: a
+     * component whose `componentWillLoad` is still awaiting `fetch()` when the
+     * render's `opts.timeout` fires.
+     */
+    interface SlowFetchCmp {
+        "url"?: string;
+    }
+    interface SsrShadowCmp {
+        "selected"?: boolean;
+    }
     interface StateCmp {
     }
+    interface WrapSsrShadowCmp {
+        "selected"?: boolean;
+    }
+
+    interface AnotherCarDetailAttributes {
+        "car": string;
+    }
+    interface AnotherCarListAttributes {
+        "cars": string;
+    }
+    interface CarDetailAttributes {
+        "car": string;
+    }
+    interface CarListAttributes {
+        "cars": string;
+    }
+    interface CmpDsdAttributes {
+        "initialCounter": number;
+    }
+    interface ListenCmpAttributes {
+        "opened": boolean;
+    }
+    interface MethodCmpAttributes {
+        "someProp": number;
+    }
+    interface MyCmpAttributes {
+        "fooProp": string;
+        "barProp": string;
+    }
+    interface MyJsxCmpAttributes {
+        "fooProp": string;
+        "barProp": string;
+    }
+    interface PropCmpAttributes {
+        "first": string;
+        "lastName": string;
+        "fullName": string;
+        "clothes": string;
+    }
+    interface RuntimeDecoratorsAttributes {
+        "basicProp": string;
+        "decoratedProp": number;
+        "decoratedGetterSetterProp": number;
+    }
+    interface ScopedCarDetailAttributes {
+        "car": string;
+    }
+    interface ScopedCarListAttributes {
+        "cars": string;
+    }
+    interface SlotParentCmpAttributes {
+        "label": string;
+    }
+    interface SlowFetchCmpAttributes {
+        "url": string;
+    }
+    interface SsrShadowCmpAttributes {
+        "selected": boolean;
+    }
+    interface WrapSsrShadowCmpAttributes {
+        "selected": boolean;
+    }
+
     interface IntrinsicElements {
+        "another-car-detail": Omit<AnotherCarDetail, keyof AnotherCarDetailAttributes> & { [K in keyof AnotherCarDetail & keyof AnotherCarDetailAttributes]?: AnotherCarDetail[K] } & { [K in keyof AnotherCarDetail & keyof AnotherCarDetailAttributes as `attr:${K}`]?: AnotherCarDetailAttributes[K] } & { [K in keyof AnotherCarDetail & keyof AnotherCarDetailAttributes as `prop:${K}`]?: AnotherCarDetail[K] };
+        "another-car-list": Omit<AnotherCarList, keyof AnotherCarListAttributes> & { [K in keyof AnotherCarList & keyof AnotherCarListAttributes]?: AnotherCarList[K] } & { [K in keyof AnotherCarList & keyof AnotherCarListAttributes as `attr:${K}`]?: AnotherCarListAttributes[K] } & { [K in keyof AnotherCarList & keyof AnotherCarListAttributes as `prop:${K}`]?: AnotherCarList[K] };
         "app-root": AppRoot;
         "build-data": BuildData;
-        "car-detail": CarDetail;
-        "car-list": CarList;
+        "car-detail": Omit<CarDetail, keyof CarDetailAttributes> & { [K in keyof CarDetail & keyof CarDetailAttributes]?: CarDetail[K] } & { [K in keyof CarDetail & keyof CarDetailAttributes as `attr:${K}`]?: CarDetailAttributes[K] } & { [K in keyof CarDetail & keyof CarDetailAttributes as `prop:${K}`]?: CarDetail[K] };
+        "car-list": Omit<CarList, keyof CarListAttributes> & { [K in keyof CarList & keyof CarListAttributes]?: CarList[K] } & { [K in keyof CarList & keyof CarListAttributes as `attr:${K}`]?: CarListAttributes[K] } & { [K in keyof CarList & keyof CarListAttributes as `prop:${K}`]?: CarList[K] };
         "cmp-a": CmpA;
         "cmp-b": CmpB;
         "cmp-c": CmpC;
+        "cmp-dsd": Omit<CmpDsd, keyof CmpDsdAttributes> & { [K in keyof CmpDsd & keyof CmpDsdAttributes]?: CmpDsd[K] } & { [K in keyof CmpDsd & keyof CmpDsdAttributes as `attr:${K}`]?: CmpDsdAttributes[K] } & { [K in keyof CmpDsd & keyof CmpDsdAttributes as `prop:${K}`]?: CmpDsd[K] };
+        "cmp-dsd-focus": CmpDsdFocus;
+        "cmp-server-vs-client": CmpServerVsClient;
+        "cmp-with-slot": CmpWithSlot;
         "dom-api": DomApi;
         "dom-interaction": DomInteraction;
         "dom-visible": DomVisible;
+        "dsd-listen-cmp": DsdListenCmp;
         "element-cmp": ElementCmp;
         "empty-cmp": EmptyCmp;
         "empty-cmp-shadow": EmptyCmpShadow;
         "env-data": EnvData;
         "event-cmp": EventCmp;
+        "hydrated-sibling-accessors": HydratedSiblingAccessors;
         "import-assets": ImportAssets;
-        "listen-cmp": ListenCmp;
-        "method-cmp": MethodCmp;
+        "listen-cmp": Omit<ListenCmp, keyof ListenCmpAttributes> & { [K in keyof ListenCmp & keyof ListenCmpAttributes]?: ListenCmp[K] } & { [K in keyof ListenCmp & keyof ListenCmpAttributes as `attr:${K}`]?: ListenCmpAttributes[K] } & { [K in keyof ListenCmp & keyof ListenCmpAttributes as `prop:${K}`]?: ListenCmp[K] };
+        "method-cmp": Omit<MethodCmp, keyof MethodCmpAttributes> & { [K in keyof MethodCmp & keyof MethodCmpAttributes]?: MethodCmp[K] } & { [K in keyof MethodCmp & keyof MethodCmpAttributes as `attr:${K}`]?: MethodCmpAttributes[K] } & { [K in keyof MethodCmp & keyof MethodCmpAttributes as `prop:${K}`]?: MethodCmp[K] };
+        "my-cmp": Omit<MyCmp, keyof MyCmpAttributes> & { [K in keyof MyCmp & keyof MyCmpAttributes]?: MyCmp[K] } & { [K in keyof MyCmp & keyof MyCmpAttributes as `attr:${K}`]?: MyCmpAttributes[K] } & { [K in keyof MyCmp & keyof MyCmpAttributes as `prop:${K}`]?: MyCmp[K] };
+        "my-jsx-cmp": Omit<MyJsxCmp, keyof MyJsxCmpAttributes> & { [K in keyof MyJsxCmp & keyof MyJsxCmpAttributes]?: MyJsxCmp[K] } & { [K in keyof MyJsxCmp & keyof MyJsxCmpAttributes as `attr:${K}`]?: MyJsxCmpAttributes[K] } & { [K in keyof MyJsxCmp & keyof MyJsxCmpAttributes as `prop:${K}`]?: MyJsxCmp[K] };
+        "nested-cmp-child": NestedCmpChild;
+        "nested-cmp-parent": NestedCmpParent;
+        "nested-scope-cmp": NestedScopeCmp;
+        "non-shadow-child": NonShadowChild;
+        "non-shadow-forwarded-slot": NonShadowForwardedSlot;
+        "non-shadow-multi-slots": NonShadowMultiSlots;
+        "non-shadow-wrapper": NonShadowWrapper;
+        "own-controller-cmp": OwnControllerCmp;
         "path-alias-cmp": PathAliasCmp;
         "prerender-cmp": PrerenderCmp;
-        "prop-cmp": PropCmp;
+        "prop-cmp": Omit<PropCmp, keyof PropCmpAttributes> & { [K in keyof PropCmp & keyof PropCmpAttributes]?: PropCmp[K] } & { [K in keyof PropCmp & keyof PropCmpAttributes as `attr:${K}`]?: PropCmpAttributes[K] } & { [K in keyof PropCmp & keyof PropCmpAttributes as `prop:${K}`]?: PropCmp[K] };
+        "resolve-var-events": ResolveVarEvents;
+        "runtime-decorators": Omit<RuntimeDecorators, keyof RuntimeDecoratorsAttributes> & { [K in keyof RuntimeDecorators & keyof RuntimeDecoratorsAttributes]?: RuntimeDecorators[K] } & { [K in keyof RuntimeDecorators & keyof RuntimeDecoratorsAttributes as `attr:${K}`]?: RuntimeDecoratorsAttributes[K] } & { [K in keyof RuntimeDecorators & keyof RuntimeDecoratorsAttributes as `prop:${K}`]?: RuntimeDecorators[K] };
+        "scoped-car-detail": Omit<ScopedCarDetail, keyof ScopedCarDetailAttributes> & { [K in keyof ScopedCarDetail & keyof ScopedCarDetailAttributes]?: ScopedCarDetail[K] } & { [K in keyof ScopedCarDetail & keyof ScopedCarDetailAttributes as `attr:${K}`]?: ScopedCarDetailAttributes[K] } & { [K in keyof ScopedCarDetail & keyof ScopedCarDetailAttributes as `prop:${K}`]?: ScopedCarDetail[K] };
+        "scoped-car-list": Omit<ScopedCarList, keyof ScopedCarListAttributes> & { [K in keyof ScopedCarList & keyof ScopedCarListAttributes]?: ScopedCarList[K] } & { [K in keyof ScopedCarList & keyof ScopedCarListAttributes as `attr:${K}`]?: ScopedCarListAttributes[K] } & { [K in keyof ScopedCarList & keyof ScopedCarListAttributes as `prop:${K}`]?: ScopedCarList[K] };
+        "shadow-child": ShadowChild;
+        "shadow-wrapper": ShadowWrapper;
         "slot-cmp": SlotCmp;
         "slot-cmp-container": SlotCmpContainer;
-        "slot-parent-cmp": SlotParentCmp;
+        "slot-parent-cmp": Omit<SlotParentCmp, keyof SlotParentCmpAttributes> & { [K in keyof SlotParentCmp & keyof SlotParentCmpAttributes]?: SlotParentCmp[K] } & { [K in keyof SlotParentCmp & keyof SlotParentCmpAttributes as `attr:${K}`]?: SlotParentCmpAttributes[K] } & { [K in keyof SlotParentCmp & keyof SlotParentCmpAttributes as `prop:${K}`]?: SlotParentCmp[K] };
+        "slow-fetch-cmp": Omit<SlowFetchCmp, keyof SlowFetchCmpAttributes> & { [K in keyof SlowFetchCmp & keyof SlowFetchCmpAttributes]?: SlowFetchCmp[K] } & { [K in keyof SlowFetchCmp & keyof SlowFetchCmpAttributes as `attr:${K}`]?: SlowFetchCmpAttributes[K] } & { [K in keyof SlowFetchCmp & keyof SlowFetchCmpAttributes as `prop:${K}`]?: SlowFetchCmp[K] };
+        "ssr-shadow-cmp": Omit<SsrShadowCmp, keyof SsrShadowCmpAttributes> & { [K in keyof SsrShadowCmp & keyof SsrShadowCmpAttributes]?: SsrShadowCmp[K] } & { [K in keyof SsrShadowCmp & keyof SsrShadowCmpAttributes as `attr:${K}`]?: SsrShadowCmpAttributes[K] } & { [K in keyof SsrShadowCmp & keyof SsrShadowCmpAttributes as `prop:${K}`]?: SsrShadowCmp[K] };
         "state-cmp": StateCmp;
+        "wrap-ssr-shadow-cmp": Omit<WrapSsrShadowCmp, keyof WrapSsrShadowCmpAttributes> & { [K in keyof WrapSsrShadowCmp & keyof WrapSsrShadowCmpAttributes]?: WrapSsrShadowCmp[K] } & { [K in keyof WrapSsrShadowCmp & keyof WrapSsrShadowCmpAttributes as `attr:${K}`]?: WrapSsrShadowCmpAttributes[K] } & { [K in keyof WrapSsrShadowCmp & keyof WrapSsrShadowCmpAttributes as `prop:${K}`]?: WrapSsrShadowCmp[K] };
     }
 }
 export { LocalJSX as JSX };
 declare module "@stencil/core" {
     export namespace JSX {
         interface IntrinsicElements {
-            "app-root": LocalJSX.AppRoot & JSXBase.HTMLAttributes<HTMLAppRootElement>;
-            "build-data": LocalJSX.BuildData & JSXBase.HTMLAttributes<HTMLBuildDataElement>;
-            "car-detail": LocalJSX.CarDetail & JSXBase.HTMLAttributes<HTMLCarDetailElement>;
+            "another-car-detail": LocalJSX.IntrinsicElements["another-car-detail"] & JSXBase.HTMLAttributes<HTMLAnotherCarDetailElement>;
             /**
              * Component that helps display a list of cars
              */
-            "car-list": LocalJSX.CarList & JSXBase.HTMLAttributes<HTMLCarListElement>;
-            "cmp-a": LocalJSX.CmpA & JSXBase.HTMLAttributes<HTMLCmpAElement>;
-            "cmp-b": LocalJSX.CmpB & JSXBase.HTMLAttributes<HTMLCmpBElement>;
-            "cmp-c": LocalJSX.CmpC & JSXBase.HTMLAttributes<HTMLCmpCElement>;
-            "dom-api": LocalJSX.DomApi & JSXBase.HTMLAttributes<HTMLDomApiElement>;
-            "dom-interaction": LocalJSX.DomInteraction & JSXBase.HTMLAttributes<HTMLDomInteractionElement>;
-            "dom-visible": LocalJSX.DomVisible & JSXBase.HTMLAttributes<HTMLDomVisibleElement>;
-            "element-cmp": LocalJSX.ElementCmp & JSXBase.HTMLAttributes<HTMLElementCmpElement>;
-            "empty-cmp": LocalJSX.EmptyCmp & JSXBase.HTMLAttributes<HTMLEmptyCmpElement>;
-            "empty-cmp-shadow": LocalJSX.EmptyCmpShadow & JSXBase.HTMLAttributes<HTMLEmptyCmpShadowElement>;
-            "env-data": LocalJSX.EnvData & JSXBase.HTMLAttributes<HTMLEnvDataElement>;
-            "event-cmp": LocalJSX.EventCmp & JSXBase.HTMLAttributes<HTMLEventCmpElement>;
-            "import-assets": LocalJSX.ImportAssets & JSXBase.HTMLAttributes<HTMLImportAssetsElement>;
-            "listen-cmp": LocalJSX.ListenCmp & JSXBase.HTMLAttributes<HTMLListenCmpElement>;
-            "method-cmp": LocalJSX.MethodCmp & JSXBase.HTMLAttributes<HTMLMethodCmpElement>;
-            "path-alias-cmp": LocalJSX.PathAliasCmp & JSXBase.HTMLAttributes<HTMLPathAliasCmpElement>;
-            "prerender-cmp": LocalJSX.PrerenderCmp & JSXBase.HTMLAttributes<HTMLPrerenderCmpElement>;
-            "prop-cmp": LocalJSX.PropCmp & JSXBase.HTMLAttributes<HTMLPropCmpElement>;
-            "slot-cmp": LocalJSX.SlotCmp & JSXBase.HTMLAttributes<HTMLSlotCmpElement>;
-            "slot-cmp-container": LocalJSX.SlotCmpContainer & JSXBase.HTMLAttributes<HTMLSlotCmpContainerElement>;
-            "slot-parent-cmp": LocalJSX.SlotParentCmp & JSXBase.HTMLAttributes<HTMLSlotParentCmpElement>;
-            "state-cmp": LocalJSX.StateCmp & JSXBase.HTMLAttributes<HTMLStateCmpElement>;
+            "another-car-list": LocalJSX.IntrinsicElements["another-car-list"] & JSXBase.HTMLAttributes<HTMLAnotherCarListElement>;
+            "app-root": LocalJSX.IntrinsicElements["app-root"] & JSXBase.HTMLAttributes<HTMLAppRootElement>;
+            "build-data": LocalJSX.IntrinsicElements["build-data"] & JSXBase.HTMLAttributes<HTMLBuildDataElement>;
+            "car-detail": LocalJSX.IntrinsicElements["car-detail"] & JSXBase.HTMLAttributes<HTMLCarDetailElement>;
+            /**
+             * Component that helps display a list of cars
+             */
+            "car-list": LocalJSX.IntrinsicElements["car-list"] & JSXBase.HTMLAttributes<HTMLCarListElement>;
+            "cmp-a": LocalJSX.IntrinsicElements["cmp-a"] & JSXBase.HTMLAttributes<HTMLCmpAElement>;
+            "cmp-b": LocalJSX.IntrinsicElements["cmp-b"] & JSXBase.HTMLAttributes<HTMLCmpBElement>;
+            "cmp-c": LocalJSX.IntrinsicElements["cmp-c"] & JSXBase.HTMLAttributes<HTMLCmpCElement>;
+            "cmp-dsd": LocalJSX.IntrinsicElements["cmp-dsd"] & JSXBase.HTMLAttributes<HTMLCmpDsdElement>;
+            "cmp-dsd-focus": LocalJSX.IntrinsicElements["cmp-dsd-focus"] & JSXBase.HTMLAttributes<HTMLCmpDsdFocusElement>;
+            "cmp-server-vs-client": LocalJSX.IntrinsicElements["cmp-server-vs-client"] & JSXBase.HTMLAttributes<HTMLCmpServerVsClientElement>;
+            "cmp-with-slot": LocalJSX.IntrinsicElements["cmp-with-slot"] & JSXBase.HTMLAttributes<HTMLCmpWithSlotElement>;
+            "dom-api": LocalJSX.IntrinsicElements["dom-api"] & JSXBase.HTMLAttributes<HTMLDomApiElement>;
+            "dom-interaction": LocalJSX.IntrinsicElements["dom-interaction"] & JSXBase.HTMLAttributes<HTMLDomInteractionElement>;
+            "dom-visible": LocalJSX.IntrinsicElements["dom-visible"] & JSXBase.HTMLAttributes<HTMLDomVisibleElement>;
+            "dsd-listen-cmp": LocalJSX.IntrinsicElements["dsd-listen-cmp"] & JSXBase.HTMLAttributes<HTMLDsdListenCmpElement>;
+            "element-cmp": LocalJSX.IntrinsicElements["element-cmp"] & JSXBase.HTMLAttributes<HTMLElementCmpElement>;
+            "empty-cmp": LocalJSX.IntrinsicElements["empty-cmp"] & JSXBase.HTMLAttributes<HTMLEmptyCmpElement>;
+            "empty-cmp-shadow": LocalJSX.IntrinsicElements["empty-cmp-shadow"] & JSXBase.HTMLAttributes<HTMLEmptyCmpShadowElement>;
+            "env-data": LocalJSX.IntrinsicElements["env-data"] & JSXBase.HTMLAttributes<HTMLEnvDataElement>;
+            "event-cmp": LocalJSX.IntrinsicElements["event-cmp"] & JSXBase.HTMLAttributes<HTMLEventCmpElement>;
+            "hydrated-sibling-accessors": LocalJSX.IntrinsicElements["hydrated-sibling-accessors"] & JSXBase.HTMLAttributes<HTMLHydratedSiblingAccessorsElement>;
+            "import-assets": LocalJSX.IntrinsicElements["import-assets"] & JSXBase.HTMLAttributes<HTMLImportAssetsElement>;
+            "listen-cmp": LocalJSX.IntrinsicElements["listen-cmp"] & JSXBase.HTMLAttributes<HTMLListenCmpElement>;
+            "method-cmp": LocalJSX.IntrinsicElements["method-cmp"] & JSXBase.HTMLAttributes<HTMLMethodCmpElement>;
+            "my-cmp": LocalJSX.IntrinsicElements["my-cmp"] & JSXBase.HTMLAttributes<HTMLMyCmpElement>;
+            "my-jsx-cmp": LocalJSX.IntrinsicElements["my-jsx-cmp"] & JSXBase.HTMLAttributes<HTMLMyJsxCmpElement>;
+            "nested-cmp-child": LocalJSX.IntrinsicElements["nested-cmp-child"] & JSXBase.HTMLAttributes<HTMLNestedCmpChildElement>;
+            "nested-cmp-parent": LocalJSX.IntrinsicElements["nested-cmp-parent"] & JSXBase.HTMLAttributes<HTMLNestedCmpParentElement>;
+            "nested-scope-cmp": LocalJSX.IntrinsicElements["nested-scope-cmp"] & JSXBase.HTMLAttributes<HTMLNestedScopeCmpElement>;
+            "non-shadow-child": LocalJSX.IntrinsicElements["non-shadow-child"] & JSXBase.HTMLAttributes<HTMLNonShadowChildElement>;
+            "non-shadow-forwarded-slot": LocalJSX.IntrinsicElements["non-shadow-forwarded-slot"] & JSXBase.HTMLAttributes<HTMLNonShadowForwardedSlotElement>;
+            "non-shadow-multi-slots": LocalJSX.IntrinsicElements["non-shadow-multi-slots"] & JSXBase.HTMLAttributes<HTMLNonShadowMultiSlotsElement>;
+            "non-shadow-wrapper": LocalJSX.IntrinsicElements["non-shadow-wrapper"] & JSXBase.HTMLAttributes<HTMLNonShadowWrapperElement>;
+            /**
+             * Used by hydrate-timeout.e2e.ts to verify the AbortController shim: a
+             * component that creates its own AbortController has that controller cascade-aborted
+             * automatically when the render times out
+             * The outcome is reported via `global` (not observable through
+             * renderToString's result) so the test can assert on it.
+             */
+            "own-controller-cmp": LocalJSX.IntrinsicElements["own-controller-cmp"] & JSXBase.HTMLAttributes<HTMLOwnControllerCmpElement>;
+            "path-alias-cmp": LocalJSX.IntrinsicElements["path-alias-cmp"] & JSXBase.HTMLAttributes<HTMLPathAliasCmpElement>;
+            "prerender-cmp": LocalJSX.IntrinsicElements["prerender-cmp"] & JSXBase.HTMLAttributes<HTMLPrerenderCmpElement>;
+            "prop-cmp": LocalJSX.IntrinsicElements["prop-cmp"] & JSXBase.HTMLAttributes<HTMLPropCmpElement>;
+            "resolve-var-events": LocalJSX.IntrinsicElements["resolve-var-events"] & JSXBase.HTMLAttributes<HTMLResolveVarEventsElement>;
+            "runtime-decorators": LocalJSX.IntrinsicElements["runtime-decorators"] & JSXBase.HTMLAttributes<HTMLRuntimeDecoratorsElement>;
+            "scoped-car-detail": LocalJSX.IntrinsicElements["scoped-car-detail"] & JSXBase.HTMLAttributes<HTMLScopedCarDetailElement>;
+            /**
+             * Component that helps display a list of cars
+             */
+            "scoped-car-list": LocalJSX.IntrinsicElements["scoped-car-list"] & JSXBase.HTMLAttributes<HTMLScopedCarListElement>;
+            "shadow-child": LocalJSX.IntrinsicElements["shadow-child"] & JSXBase.HTMLAttributes<HTMLShadowChildElement>;
+            "shadow-wrapper": LocalJSX.IntrinsicElements["shadow-wrapper"] & JSXBase.HTMLAttributes<HTMLShadowWrapperElement>;
+            "slot-cmp": LocalJSX.IntrinsicElements["slot-cmp"] & JSXBase.HTMLAttributes<HTMLSlotCmpElement>;
+            "slot-cmp-container": LocalJSX.IntrinsicElements["slot-cmp-container"] & JSXBase.HTMLAttributes<HTMLSlotCmpContainerElement>;
+            "slot-parent-cmp": LocalJSX.IntrinsicElements["slot-parent-cmp"] & JSXBase.HTMLAttributes<HTMLSlotParentCmpElement>;
+            /**
+             * Used by hydrate-timeout.e2e.ts to reproduce stenciljs/core#6864: a
+             * component whose `componentWillLoad` is still awaiting `fetch()` when the
+             * render's `opts.timeout` fires.
+             */
+            "slow-fetch-cmp": LocalJSX.IntrinsicElements["slow-fetch-cmp"] & JSXBase.HTMLAttributes<HTMLSlowFetchCmpElement>;
+            "ssr-shadow-cmp": LocalJSX.IntrinsicElements["ssr-shadow-cmp"] & JSXBase.HTMLAttributes<HTMLSsrShadowCmpElement>;
+            "state-cmp": LocalJSX.IntrinsicElements["state-cmp"] & JSXBase.HTMLAttributes<HTMLStateCmpElement>;
+            "wrap-ssr-shadow-cmp": LocalJSX.IntrinsicElements["wrap-ssr-shadow-cmp"] & JSXBase.HTMLAttributes<HTMLWrapSsrShadowCmpElement>;
         }
     }
 }

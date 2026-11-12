@@ -15,7 +15,7 @@ export class MockDocument extends MockHTMLElement {
   cookie: string;
   referrer: string;
 
-  constructor(html: string | boolean = null, win: any = null) {
+  constructor(html: string | boolean | null = null, win: any = null) {
     super(null, null);
     this.nodeName = NODE_NAMES.DOCUMENT_NODE;
     this.nodeType = NODE_TYPES.DOCUMENT_NODE;
@@ -53,15 +53,15 @@ export class MockDocument extends MockHTMLElement {
     throw new Error('Unimplemented');
   }
 
-  get location() {
+  get location(): Location | null {
     if (this.defaultView != null) {
       return (this.defaultView as Window).location;
     }
     return null;
   }
-  set location(val: Location) {
+  set location(val: string) {
     if (this.defaultView != null) {
-      (this.defaultView as Window).location = val;
+      (this.defaultView as Window).location.href = val;
     }
   }
 
@@ -294,6 +294,7 @@ const DOC_KEY_KEEPERS = new Set([
   'ownerDocument',
   'parentNode',
   'childNodes',
+  '_childNodes',
   '_shadowRoot',
 ]);
 

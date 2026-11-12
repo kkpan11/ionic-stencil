@@ -1,10 +1,9 @@
 /// <reference types="@wdio/browser-runner" />
 
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import type { Options } from '@wdio/types';
-
-const __dirname = path.dirname(new URL(import.meta.url).pathname);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isCI = Boolean(process.env.CI);
 
 /**
@@ -33,7 +32,7 @@ const BROWSER_CONFIGURATION = (() => {
   }
 })();
 
-export const config: Options.Testrunner = {
+export const config: WebdriverIO.Config = {
   //
   // ====================
   // Runner Configuration
@@ -53,13 +52,6 @@ export const config: Options.Testrunner = {
       },
     },
   ],
-  autoCompileOpts: {
-    autoCompile: true,
-    tsNodeOpts: {
-      project: './tsconfig.json',
-      transpileOnly: true,
-    },
-  },
 
   //
   // ==================
@@ -76,11 +68,9 @@ export const config: Options.Testrunner = {
   // The path of the spec files will be resolved relative from the directory of
   // of the config file unless it's absolute.
   //
-  specs: [['./**/*.test.tsx']],
+  specs: [['./**/*.test.tsx', './**/*.test.ts']],
   // Patterns to exclude.
-  exclude: [
-    // 'path/to/excluded/files'
-  ],
+  exclude: ['./node_modules/**'],
   //
   // ============
   // Capabilities
@@ -102,7 +92,6 @@ export const config: Options.Testrunner = {
   // we set this to an empty array here and programmatically add configuration below
   //
   capabilities: [],
-
   //
   // ===================
   // Test Configurations
@@ -345,10 +334,15 @@ export const config: Options.Testrunner = {
 if (['CHROME', 'ALL'].includes(BROWSER_CONFIGURATION)) {
   (config.capabilities as WebdriverIO.Capabilities[]).push({
     browserName: 'chrome',
+    browserVersion: 'stable',
+    'wdio:enforceWebDriverClassic': true, // < this is 3x faster?
   });
 }
 
-if (['FIREFOX', 'ALL'].includes(BROWSER_CONFIGURATION)) {
+/**
+ * Disable FF tests due to issues in the WebDriver protocol
+ */
+if (['FIREFOX'].includes(BROWSER_CONFIGURATION)) {
   (config.capabilities as WebdriverIO.Capabilities[]).push({
     browserName: 'firefox',
   });

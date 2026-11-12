@@ -1,8 +1,11 @@
 import { BUILD } from '@app-data';
-import { doc, getHostRef, plt, registerHost, supportsShadow, win } from '@platform';
-import { CMP_FLAGS, queryNonceMetaTagContent } from '@utils';
+import { getHostRef, nextTick, plt, registerHost, supportsShadow, transformTag, win } from '@platform';
+import { addHostEventListeners } from '@runtime';
 
 import type * as d from '../declarations';
+import { CMP_FLAGS } from '../utils/constants';
+import { queryNonceMetaTagContent } from '../utils/query-nonce-meta-tag-content';
+import { createShadowRoot } from '../utils/shadow-root';
 import { connectedCallback } from './connected-callback';
 import { disconnectedCallback } from './disconnected-callback';
 import {
@@ -13,10 +16,11 @@ import {
   patchTextContent,
 } from './dom-extras';
 import { hmrStart } from './hmr-component';
+import { normalizeWatchers } from './normalize-watchers';
 import { createTime, installDevTools } from './profile';
 import { proxyComponent } from './proxy-component';
-import { HYDRATED_CSS, HYDRATED_STYLE_ID, PLATFORM_FLAGS, PROXY_FLAGS, SLOT_FB_CSS } from './runtime-constants';
-import { convertScopedToShadow, registerStyle } from './styles';
+import { HYDRATED_CSS, PLATFORM_FLAGS, PROXY_FLAGS, SLOT_FB_CSS } from './runtime-constants';
+import { hydrateScopedToShadow } from './styles';
 import { appDidLoad } from './update-component';
 export { setNonce } from '@platform';
 
@@ -26,21 +30,24 @@ export const bootstrapLazy = (lazyBundles: d.LazyBundlesRuntimeData, options: d.
   }
   installDevTools();
 
+  if (!win.document) {
+    console.warn('Stencil: No document found. Skipping bootstrapping lazy components.');
+    return;
+  }
+
   const endBootstrap = createTime('bootstrapLazy');
   const cmpTags: string[] = [];
   const exclude = options.exclude || [];
   const customElements = win.customElements;
-  const head = doc.head;
+  const head = win.document.head;
   const metaCharset = /*@__PURE__*/ head.querySelector('meta[charset]');
-  const dataStyles = /*@__PURE__*/ doc.createElement('style');
+  const dataStyles = /*@__PURE__*/ win.document.createElement('style');
   const deferredConnectedCallbacks: { connectedCallback: () => void }[] = [];
-  const styles = /*@__PURE__*/ doc.querySelectorAll(`[${HYDRATED_STYLE_ID}]`);
   let appLoadFallback: any;
   let isBootstrapping = true;
-  let i = 0;
 
   Object.assign(plt, options);
-  plt.$resourcesUrl$ = new URL(options.resourcesUrl || './', doc.baseURI).href;
+  plt.$resourcesUrl$ = new URL(options.resourcesUrl || './', win.document.baseURI).href;
   if (BUILD.asyncQueue) {
     if (options.syncQueue) {
       plt.$flags$ |= PLATFORM_FLAGS.queueSync;
@@ -51,10 +58,11 @@ export const bootstrapLazy = (lazyBundles: d.LazyBundlesRuntimeData, options: d.
     // async queue. This will improve the first input delay
     plt.$flags$ |= PLATFORM_FLAGS.appLoaded;
   }
+
   if (BUILD.hydrateClientSide && BUILD.shadowDom) {
-    for (; i < styles.length; i++) {
-      registerStyle(styles[i].getAttribute(HYDRATED_STYLE_ID), convertScopedToShadow(styles[i].innerHTML), true);
-    }
+    const cmpMetas: Pick<d.ComponentRuntimeMeta, '$flags$' | '$tagName$'>[] = [];
+    lazyBundles.map((lazyBundle) => lazyBundle[1].map(([$flags$, $tagName$]) => cmpMetas.push({ $flags$, $tagName$ })));
+    hydrateScopedToShadow(cmpMetas);
   }
 
   let hasSlotRelocation = false;
@@ -82,20 +90,29 @@ export const bootstrapLazy = (lazyBundles: d.LazyBundlesRuntimeData, options: d.
       if (BUILD.reflect) {
         cmpMeta.$attrsToReflect$ = [];
       }
-      if (BUILD.watchCallback) {
-        cmpMeta.$watchers$ = compactMeta[4] ?? {};
+      if (BUILD.propChangeCallback) {
+        // Watchers need normalization because the compiler format changed in
+        // 4.39.x (string[] → { [method]: flags }[]). Libraries compiled with
+        // an older Stencil may still emit the legacy format. Serializers and
+        // deserializers were introduced after that change, so their format is
+        // always current and only needs a nullish fallback.
+        cmpMeta.$watchers$ = normalizeWatchers(compactMeta[4]);
+        cmpMeta.$serializers$ = compactMeta[5] ?? {};
+        cmpMeta.$deserializers$ = compactMeta[6] ?? {};
       }
       if (BUILD.shadowDom && !supportsShadow && cmpMeta.$flags$ & CMP_FLAGS.shadowDomEncapsulation) {
         // TODO(STENCIL-854): Remove code related to legacy shadowDomShim field
         cmpMeta.$flags$ |= CMP_FLAGS.needsShadowDomShim;
       }
+      // TODO: deprecated in favour of `setTagTransformer` and `transformTag`. Remove `BUILD.transformTagName` & `transformTagName` in 5.0
       const tagName =
         BUILD.transformTagName && options.transformTagName
           ? options.transformTagName(cmpMeta.$tagName$)
-          : cmpMeta.$tagName$;
+          : transformTag(cmpMeta.$tagName$);
       const HostElement = class extends HTMLElement {
         ['s-p']: Promise<void>[];
         ['s-rc']: (() => void)[];
+        hasRegisteredEventListeners = false;
 
         // StencilLazyHost
         constructor(self: HTMLElement) {
@@ -110,13 +127,19 @@ export const bootstrapLazy = (lazyBundles: d.LazyBundlesRuntimeData, options: d.
             // add the read-only property "shadowRoot" to the host element
             // adding the shadow root build conditionals to minimize runtime
             if (supportsShadow) {
-              if (BUILD.shadowDelegatesFocus) {
-                self.attachShadow({
-                  mode: 'open',
-                  delegatesFocus: !!(cmpMeta.$flags$ & CMP_FLAGS.shadowDelegatesFocus),
-                });
+              if (!self.shadowRoot) {
+                // we don't want to call `attachShadow` if there's already a shadow root
+                // attached to the component
+                createShadowRoot.call(self, cmpMeta);
               } else {
-                self.attachShadow({ mode: 'open' });
+                // we want to check to make sure that the mode for the shadow
+                // root already attached to the element (i.e. created via DSD)
+                // is set to 'open' since that's the only mode we support
+                if (self.shadowRoot.mode !== 'open') {
+                  throw new Error(
+                    `Unable to re-use existing shadow root for ${cmpMeta.$tagName$}! Mode is set to ${self.shadowRoot.mode} but Stencil only supports open shadow roots.`,
+                  );
+                }
               }
             } else if (!BUILD.hydrateServerSide && !('shadowRoot' in self)) {
               (self as any).shadowRoot = self;
@@ -125,6 +148,22 @@ export const bootstrapLazy = (lazyBundles: d.LazyBundlesRuntimeData, options: d.
         }
 
         connectedCallback() {
+          const hostRef = getHostRef(this);
+          if (!hostRef) {
+            return;
+          }
+
+          /**
+           * The `connectedCallback` lifecycle event can potentially be fired multiple times
+           * if the element is removed from the DOM and re-inserted. This is not a common use case,
+           * but it can happen in some scenarios. To prevent registering the same event listeners
+           * multiple times, we will only register them once.
+           */
+          if (!this.hasRegisteredEventListeners) {
+            this.hasRegisteredEventListeners = true;
+            addHostEventListeners(this, hostRef, cmpMeta.$listeners$, false);
+          }
+
           if (appLoadFallback) {
             clearTimeout(appLoadFallback);
             appLoadFallback = null;
@@ -139,33 +178,58 @@ export const bootstrapLazy = (lazyBundles: d.LazyBundlesRuntimeData, options: d.
 
         disconnectedCallback() {
           plt.jmp(() => disconnectedCallback(this));
+
+          /**
+           * Clear up references within the `$vnode$` object to the DOM
+           * node that was removed. This is necessary to ensure that these
+           * references used as keys in the `hostRef` object can be properly
+           * garbage collected.
+           *
+           * Also remove the reference from `deferredConnectedCallbacks` array
+           * otherwise removed instances won't get garbage collected.
+           *
+           * Use `nextTick` (microtask) rather than `plt.raf` since
+           * `requestAnimationFrame` callbacks do not fire while `document.hidden`
+           */
+          nextTick(() => {
+            const hostRef = getHostRef(this);
+            if (!hostRef) {
+              return;
+            }
+            const i = deferredConnectedCallbacks.findIndex((host) => host === this);
+            if (i > -1) {
+              deferredConnectedCallbacks.splice(i, 1);
+            }
+            if (hostRef.$vnode$?.$elm$?.isConnected === false) {
+              delete hostRef.$vnode$.$elm$;
+            }
+          });
         }
 
         componentOnReady() {
-          return getHostRef(this).$onReadyPromise$;
+          return getHostRef(this)?.$onReadyPromise$;
         }
       };
 
-      // TODO(STENCIL-914): this check and `else` block can go away and be replaced by just the `scoped` check
-      if (BUILD.experimentalSlotFixes) {
-        // This check is intentionally not combined with the surrounding `experimentalSlotFixes` check
-        // since, moving forward, we only want to patch the pseudo shadow DOM when the component is scoped
-        if (BUILD.scoped && cmpMeta.$flags$ & CMP_FLAGS.scopedCssEncapsulation) {
-          patchPseudoShadowDom(HostElement.prototype, cmpMeta);
+      if (!(cmpMeta.$flags$ & CMP_FLAGS.shadowDomEncapsulation) && cmpMeta.$flags$ & CMP_FLAGS.hasSlot) {
+        if (BUILD.experimentalSlotFixes) {
+          patchPseudoShadowDom(HostElement.prototype);
+        } else {
+          if (BUILD.slotChildNodesFix) {
+            patchChildSlotNodes(HostElement.prototype);
+          }
+          if (BUILD.cloneNodeFix) {
+            patchCloneNode(HostElement.prototype);
+          }
+          if (BUILD.appendChildSlotFix) {
+            patchSlotAppendChild(HostElement.prototype);
+          }
+          if (BUILD.scopedSlotTextContentFix && cmpMeta.$flags$ & CMP_FLAGS.scopedCssEncapsulation) {
+            patchTextContent(HostElement.prototype);
+          }
         }
-      } else {
-        if (BUILD.slotChildNodesFix) {
-          patchChildSlotNodes(HostElement.prototype, cmpMeta);
-        }
-        if (BUILD.cloneNodeFix) {
-          patchCloneNode(HostElement.prototype);
-        }
-        if (BUILD.appendChildSlotFix) {
-          patchSlotAppendChild(HostElement.prototype);
-        }
-        if (BUILD.scopedSlotTextContentFix && cmpMeta.$flags$ & CMP_FLAGS.scopedCssEncapsulation) {
-          patchTextContent(HostElement.prototype);
-        }
+      } else if (BUILD.cloneNodeFix) {
+        patchCloneNode(HostElement.prototype);
       }
 
       // if the component is formAssociated we need to set that on the host
@@ -200,13 +264,13 @@ export const bootstrapLazy = (lazyBundles: d.LazyBundlesRuntimeData, options: d.
   // TODO(STENCIL-1118): Add test cases for CSS content based on conditionals
   if (cmpTags.length > 0) {
     // Add styles for `slot-fb` elements if any of our components are using slots outside the Shadow DOM
-    if (hasSlotRelocation) {
+    if (BUILD.slotRelocation && hasSlotRelocation) {
       dataStyles.textContent += SLOT_FB_CSS;
     }
 
     // Add hydration styles
     if (BUILD.invisiblePrehydration && (BUILD.hydratedClass || BUILD.hydratedAttribute)) {
-      dataStyles.textContent += cmpTags + HYDRATED_CSS;
+      dataStyles.textContent += cmpTags.sort() + HYDRATED_CSS;
     }
 
     // If we have styles, add them to the DOM
@@ -214,7 +278,7 @@ export const bootstrapLazy = (lazyBundles: d.LazyBundlesRuntimeData, options: d.
       dataStyles.setAttribute('data-styles', '');
 
       // Apply CSP nonce to the style tag if it exists
-      const nonce = plt.$nonce$ ?? queryNonceMetaTagContent(doc);
+      const nonce = plt.$nonce$ ?? queryNonceMetaTagContent(win.document);
       if (nonce != null) {
         dataStyles.setAttribute('nonce', nonce);
       }

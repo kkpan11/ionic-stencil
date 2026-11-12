@@ -1,0 +1,99 @@
+name: Perf Benchmark - Runtime
+
+on:
+  workflow_call:
+    # Make this a reusable workflow, no value needed
+    # https://docs.github.com/en/actions/using-workflows/reusing-workflows
+
+permissions:
+  contents: read
+
+jobs:
+  perf_runtime_diff:
+    name: Runtime Benchmark (PR vs base)
+    # Only on a PR labeled "Runtime Performance" - most PRs don't touch
+    # perf-sensitive code, and CodSpeed minutes are limited. Doesn't apply to
+    # push (nothing to diff against) or merge_group.
+    if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'Runtime Performance') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout PR Head
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+
+      - name: Get Core Dependencies
+        uses: ./.github/workflows/actions/get-core-dependencies
+
+      - name: Download Build Archive
+        uses: ./.github/workflows/actions/download-archive
+        with:
+          name: stencil-core
+          path: .
+          filename: stencil-core-build.zip
+
+      - name: Install PR test/runtime-benchmark Dependencies
+        run: npm ci
+        working-directory: test/runtime-benchmark
+        shell: bash
+
+      - name: Run PR Runtime Benchmark
+        run: npm run benchmark
+        working-directory: test/runtime-benchmark
+        shell: bash
+
+      - name: Convert PR Results to Raw Format
+        run: node to-codspeed-raw.js "$GITHUB_WORKSPACE/pr-raw.json"
+        working-directory: test/runtime-benchmark
+        shell: bash
+
+      - name: Checkout Base Branch
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - name: Install Base Dependencies
+        run: |
+          npm ci
+          npm run install.jest
+        working-directory: base
+        shell: bash
+
+      - name: Build Base Stencil Core
+        run: npm run build -- --ci
+        working-directory: base
+        shell: bash
+
+      - name: Install Base test/runtime-benchmark Dependencies
+        run: npm ci
+        working-directory: base/test/runtime-benchmark
+        shell: bash
+
+      - name: Run Base Runtime Benchmark
+        run: npm run benchmark
+        working-directory: base/test/runtime-benchmark
+        shell: bash
+
+      - name: Convert Base Results to Raw Format
+        run: node to-codspeed-raw.js "$GITHUB_WORKSPACE/base-raw.json"
+        working-directory: base/test/runtime-benchmark
+        shell: bash
+
+      - name: Write PR Number
+        run: echo "${{ github.event.pull_request.number }}" > pr-number.txt
+        shell: bash
+
+      # Uploaded as data only, for a separate privileged workflow to read and post
+      # a comment - this job never gets write access (forks always get a read-only
+      # GITHUB_TOKEN for pull_request-triggered runs, by GitHub's design), and it
+      # must stay that way since this job builds and executes the PR's own code.
+      - name: Upload Benchmark Results
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+        with:
+          name: perf-runtime-results
+          path: |
+            pr-raw.json
+            base-raw.json
+            pr-number.txt
+          retention-days: 1

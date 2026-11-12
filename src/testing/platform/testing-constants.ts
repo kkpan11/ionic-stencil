@@ -3,7 +3,7 @@ import type * as d from '@stencil/core/internal';
 import { QueuedLoadModule } from './load-module';
 
 export const styles: d.StyleMap = new Map();
-export const modeResolutionChain: d.ResolutionHandler[] = [];
+export const modeResolver: d.ResolutionHandler[] = [];
 
 /**
  * A mapping of custom element tags (e.g. `my-component`) to their constructor
@@ -21,8 +21,3 @@ export const queuedLoadModules: QueuedLoadModule[] = [];
  * A collection of errors that were detected to surface during the rendering process
  */
 export const caughtErrors: Error[] = [];
-/**
- * A mapping of runtime references to HTML elements to the data structure Stencil uses to track the element alongside
- * additional metadata
- */
-export const hostRefs = new Map<d.RuntimeRef, d.HostRef>();

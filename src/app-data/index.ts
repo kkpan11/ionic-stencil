@@ -24,19 +24,9 @@ import type { BuildConditionals } from '@stencil/core/internal';
  */
 export const BUILD: BuildConditionals = {
   allRenderFn: false,
-  cmpDidLoad: true,
-  cmpDidUnload: false,
-  cmpDidUpdate: true,
-  cmpDidRender: true,
-  cmpWillLoad: true,
-  cmpWillUpdate: true,
-  cmpWillRender: true,
-  connectedCallback: true,
-  disconnectedCallback: true,
   element: true,
   event: true,
   hasRenderFn: true,
-  lifecycle: true,
   hostListener: true,
   hostListenerTargetWindow: true,
   hostListenerTargetDocument: true,
@@ -70,7 +60,7 @@ export const BUILD: BuildConditionals = {
   vdomRender: true,
   vdomStyle: true,
   vdomText: true,
-  watchCallback: true,
+  propChangeCallback: true,
   taskQueue: true,
   hotModuleReplacement: false,
   isDebug: false,
@@ -88,6 +78,7 @@ export const BUILD: BuildConditionals = {
   cloneNodeFix: false,
   hydratedAttribute: false,
   hydratedClass: true,
+  // TODO(STENCIL-1305): remove this option
   scriptDataOpts: false,
   // TODO(STENCIL-914): remove this option when `experimentalSlotFixes` is the default behavior
   scopedSlotTextContentFix: false,
@@ -100,12 +91,13 @@ export const BUILD: BuildConditionals = {
   propNumber: true,
   propString: true,
   constructableCSS: true,
-  cmpShouldUpdate: true,
   devTools: false,
   shadowDelegatesFocus: true,
+  shadowSlotAssignmentManual: false,
   initializeNextTick: false,
-  asyncLoading: false,
+  asyncLoading: true,
   asyncQueue: false,
+  // TODO: deprecated in favour of `setTagTransformer` and `transformTag`. Remove in 5.0
   transformTagName: false,
   attachStyles: true,
   // TODO(STENCIL-914): remove this option when `experimentalSlotFixes` is the default behavior

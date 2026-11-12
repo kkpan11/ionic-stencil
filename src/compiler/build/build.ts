@@ -6,7 +6,7 @@ import type * as d from '../../declarations';
 import { generateOutputTargets } from '../output-targets';
 import { emptyOutputTargets } from '../output-targets/empty-dir';
 import { generateGlobalStyles } from '../style/global-styles';
-import { runTsProgram } from '../transpile/run-program';
+import { runTsProgram, validateTypesAfterGeneration } from '../transpile/run-program';
 import { buildAbort, buildFinish } from './build-finish';
 import { writeBuild } from './write-build';
 
@@ -36,12 +36,24 @@ export const build = async (
 
     // run typescript program
     const tsTimeSpan = buildCtx.createTimeSpan('transpile started');
-    const componentDtsChanged = await runTsProgram(config, compilerCtx, buildCtx, tsBuilder);
+    const emittedDts = await runTsProgram(config, compilerCtx, buildCtx, tsBuilder);
     tsTimeSpan.finish('transpile finished');
     if (buildCtx.hasError) return buildAbort(buildCtx);
 
-    if (config.watch && componentDtsChanged) {
-      // silent abort for watch mode only
+    // generate types and validate AFTER components.d.ts is written
+    const { hasTypesChanged, needsRebuild } = await validateTypesAfterGeneration(
+      config,
+      compilerCtx,
+      buildCtx,
+      tsBuilder,
+      emittedDts,
+    );
+    if (buildCtx.hasError) return buildAbort(buildCtx);
+
+    if (needsRebuild || (config.watch && hasTypesChanged)) {
+      // Abort and signal that a rebuild is needed:
+      // - needsRebuild: components.d.ts was just generated, need fresh TS program
+      // - watch mode with types changed: let watch trigger rebuild
       return null;
     }
 

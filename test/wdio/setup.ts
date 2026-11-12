@@ -12,10 +12,19 @@ declare global {
 const testRequiresManualSetup =
   window.__wdioSpec__.includes('custom-elements-output-tag-class-different') ||
   window.__wdioSpec__.includes('custom-elements-delegates-focus') ||
-  window.__wdioSpec__.includes('custom-elements-output');
+  window.__wdioSpec__.includes('custom-elements-output') ||
+  window.__wdioSpec__.includes('custom-elements-boolean-string') ||
+  window.__wdioSpec__.includes('no-external-runtime') ||
+  window.__wdioSpec__.includes('global-script') ||
+  window.__wdioSpec__.endsWith('style-hydration.test.tsx') ||
+  window.__wdioSpec__.endsWith('custom-tag-name.test.tsx') ||
+  window.__wdioSpec__.endsWith('page-list.test.ts') ||
+  window.__wdioSpec__.endsWith('event-re-register.test.tsx') ||
+  window.__wdioSpec__.endsWith('render.test.tsx') ||
+  window.__wdioSpec__.endsWith('global-styles.test.tsx');
 
 /**
- * setup all components defined in tests except for those where we want ot manually setup
+ * setup all components defined in tests except for those where we want to manually setup
  * the components in the test
  */
 if (!testRequiresManualSetup) {

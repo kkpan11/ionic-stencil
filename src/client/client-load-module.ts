@@ -6,6 +6,12 @@ import { consoleDevError, consoleError } from './client-log';
 export const cmpModules = /*@__PURE__*/ new Map<string, { [exportName: string]: d.ComponentConstructor }>();
 
 /**
+ * Tracks how many times a dynamic `import()` for a given lazy bundle has failed.
+ * Used to cache bust the retry attempt in connected-callback.ts
+ */
+const failedLoadAttempts = /*@__PURE__*/ new Map<string, number>();
+
+/**
  * We need to separate out this prefix so that Esbuild doesn't try to resolve
  * the below, but instead retains a dynamic `import()` statement in the
  * emitted code.
@@ -27,7 +33,7 @@ export const loadModule = (
   cmpMeta: d.ComponentRuntimeMeta,
   hostRef: d.HostRef,
   hmrVersionId?: string,
-): Promise<d.ComponentConstructor> | d.ComponentConstructor => {
+): Promise<d.ComponentConstructor | undefined> | d.ComponentConstructor | undefined => {
   // loadModuleImport
   const exportName = cmpMeta.$tagName$.replace(/-/g, '_');
   const bundleId = cmpMeta.$lazyBundleId$;
@@ -36,22 +42,39 @@ export const loadModule = (
       `Trying to lazily load component <${cmpMeta.$tagName$}> with style mode "${hostRef.$modeName$}", but it does not exist.`,
     );
     return undefined;
+  } else if (!bundleId) {
+    return undefined;
   }
   const module = !BUILD.hotModuleReplacement ? cmpModules.get(bundleId) : false;
   if (module) {
     return module[exportName];
   }
+  const retryCount = failedLoadAttempts.get(bundleId) ?? 0;
+  const cacheBustParams = [
+    retryCount > 0 ? `s-retry=${retryCount}` : '',
+    BUILD.hotModuleReplacement && hmrVersionId ? `s-hmr=${hmrVersionId}` : '',
+  ]
+    .filter(Boolean)
+    .join('&');
   /*!__STENCIL_STATIC_IMPORT_SWITCH__*/
   return import(
     /* @vite-ignore */
+    /* turbopackIgnore: true */
     /* webpackInclude: /\.entry\.js$/ */
     /* webpackExclude: /\.system\.entry\.js$/ */
     /* webpackMode: "lazy" */
-    `${MODULE_IMPORT_PREFIX}${bundleId}.entry.js${BUILD.hotModuleReplacement && hmrVersionId ? '?s-hmr=' + hmrVersionId : ''}`
-  ).then((importedModule) => {
-    if (!BUILD.hotModuleReplacement) {
-      cmpModules.set(bundleId, importedModule);
-    }
-    return importedModule[exportName];
-  }, consoleError);
+    `${MODULE_IMPORT_PREFIX}${bundleId}.entry.js${cacheBustParams ? '?' + cacheBustParams : ''}`
+  ).then(
+    (importedModule) => {
+      if (!BUILD.hotModuleReplacement) {
+        failedLoadAttempts.delete(bundleId);
+        cmpModules.set(bundleId, importedModule);
+      }
+      return importedModule[exportName];
+    },
+    (e: Error) => {
+      failedLoadAttempts.set(bundleId, retryCount + 1);
+      consoleError(e, hostRef.$hostElement$);
+    },
+  );
 };

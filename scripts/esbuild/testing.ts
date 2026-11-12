@@ -1,19 +1,18 @@
 import type { BuildOptions as ESBuildOptions, Plugin } from 'esbuild';
 import fs from 'fs-extra';
-import { join } from 'path';
+import path from 'path';
 
-import { copyTestingInternalDts, writePatchedPuppeteerDts } from '../bundles/testing';
 import { getBanner } from '../utils/banner';
 import type { BuildOptions } from '../utils/options';
 import { writePkgJson } from '../utils/write-pkg-json';
 import {
   externalAlias,
+  externalNodeModules,
   getBaseEsbuildOptions,
   getEsbuildAliases,
-  getEsbuildExternalModules,
   getFirstOutputFile,
   runBuilds,
-} from './util';
+} from './utils';
 
 const EXTERNAL_TESTING_MODULES = [
   'constants',
@@ -25,13 +24,13 @@ const EXTERNAL_TESTING_MODULES = [
 ];
 
 export async function buildTesting(opts: BuildOptions) {
-  const inputDir = join(opts.buildDir, 'testing');
-  const sourceDir = join(opts.srcDir, 'testing');
+  const inputDir = path.join(opts.buildDir, 'testing');
+  const sourceDir = path.join(opts.srcDir, 'testing');
   await fs.emptyDir(opts.output.testingDir);
 
   await Promise.all([
     // copy jest testing entry files
-    fs.copy(join(opts.scriptsBundlesDir, 'helpers', 'jest'), opts.output.testingDir),
+    fs.copy(path.join(opts.scriptsBundlesDir, 'helpers', 'jest'), opts.output.testingDir),
     copyTestingInternalDts(opts, inputDir),
   ]);
 
@@ -45,16 +44,20 @@ export async function buildTesting(opts: BuildOptions) {
 
   const external = [
     ...EXTERNAL_TESTING_MODULES,
-    ...getEsbuildExternalModules(opts, opts.output.testingDir),
+    ...externalNodeModules,
+    '../internal/testing/*',
+    '../cli/index.cjs',
+    '../sys/node/index.js',
     '../compiler/stencil.js',
   ];
 
+  const aliases = getEsbuildAliases();
   const testingEsbuildOptions: ESBuildOptions = {
     ...getBaseEsbuildOptions(),
-    entryPoints: [join(sourceDir, 'index.ts')],
+    entryPoints: [path.join(sourceDir, 'index.ts')],
     bundle: true,
     format: 'cjs',
-    outfile: join(opts.output.testingDir, 'index.js'),
+    outfile: path.join(opts.output.testingDir, 'index.js'),
     platform: 'node',
     logLevel: 'info',
     external,
@@ -63,7 +66,7 @@ export async function buildTesting(opts: BuildOptions) {
      * in `lazyRequirePlugin` and modify the imports
      */
     write: false,
-    alias: getEsbuildAliases(),
+    alias: aliases,
     banner: { js: getBanner(opts, `Stencil Testing`, true) },
     plugins: [
       externalAlias('@app-data', '@stencil/core/internal/app-data'),
@@ -86,7 +89,7 @@ export async function buildTesting(opts: BuildOptions) {
 }
 
 function getLazyRequireFn(opts: BuildOptions) {
-  return fs.readFileSync(join(opts.bundleHelpersDir, 'lazy-require.js'), 'utf8').trim();
+  return fs.readFileSync(path.join(opts.bundleHelpersDir, 'lazy-require.js'), 'utf8').trim();
 }
 
 function lazyRequirePlugin(opts: BuildOptions, moduleIds: string[]): Plugin {
@@ -128,4 +131,43 @@ function ignorePuppeteerDependency(opts: BuildOptions): Plugin {
       });
     },
   };
+}
+
+export async function copyTestingInternalDts(opts: BuildOptions, inputDir: string) {
+  // copy testing d.ts files
+
+  await fs.copy(path.join(inputDir), path.join(opts.output.testingDir), {
+    filter: (f) => {
+      if (f.endsWith('.d.ts')) {
+        return true;
+      }
+      if (fs.statSync(f).isDirectory() && !f.includes('platform')) {
+        return true;
+      }
+      return false;
+    },
+  });
+}
+
+/**
+ * Write a patched version of
+ * `src/testing/puppeteer/puppeteer-declarations.d.ts` which has a `@ts-ignore`
+ * added to prevent a type-checking error if a Stencil project does not have
+ * puppeteer installed.
+ *
+ * @param opts build options
+ */
+export async function writePatchedPuppeteerDts(opts: BuildOptions) {
+  const typeFilePath = path.join(opts.output.testingDir, 'puppeteer', 'puppeteer-declarations.d.ts');
+  const updatedFileContent = (await fs.readFile(typeFilePath, 'utf8'))
+    .split('\n')
+    .reduce((lines, line) => {
+      if (line.endsWith(`from 'puppeteer';`)) {
+        lines.push('// @ts-ignore - avoid requiring puppeteer as dependency');
+      }
+      lines.push(line);
+      return lines;
+    }, [] as string[])
+    .join('\n');
+  await fs.writeFile(typeFilePath, updatedFileContent);
 }

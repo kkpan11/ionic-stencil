@@ -27,45 +27,34 @@ const generateLoader = async (
   }
 
   const es5HtmlElement = await getClientPolyfill(config, compilerCtx, 'es5-html-element.js');
-
-  const packageJsonContent = JSON.stringify(
-    {
-      name: config.fsNamespace + '-loader',
-      private: true,
-      typings: './index.d.ts',
-      module: './index.js',
-      main: './index.cjs.js',
-      'jsnext:main': './index.es2017.js',
-      es2015: './index.es2017.js',
-      es2017: './index.es2017.js',
-      unpkg: './cdn.js',
-    },
-    null,
-    2,
-  );
+  const polyfillsEntryPoint = join(es2017Dir, 'polyfills/index.js');
+  const polyfillsExport = `export * from '${relative(loaderPath, polyfillsEntryPoint)}';`;
 
   const es5EntryPoint = join(es5Dir, 'loader.js');
+  const indexContent = filterAndJoin([
+    generatePreamble(config),
+    es5HtmlElement,
+    config.buildEs5 ? polyfillsExport : null,
+    `export * from '${relative(loaderPath, es5EntryPoint)}';`,
+  ]);
+
   const es2017EntryPoint = join(es2017Dir, 'loader.js');
-  const polyfillsEntryPoint = join(es2017Dir, 'polyfills/index.js');
+  const indexES2017Content = filterAndJoin([
+    generatePreamble(config),
+    config.buildEs5 ? polyfillsExport : null,
+    `export * from '${relative(loaderPath, es2017EntryPoint)}';`,
+  ]);
+
   const cjsEntryPoint = join(cjsDir, 'loader.cjs.js');
-  const polyfillsExport = `export * from '${relative(loaderPath, polyfillsEntryPoint)}';`;
-  const indexContent = `${generatePreamble(config)}
-${es5HtmlElement}
-${polyfillsExport}
-export * from '${relative(loaderPath, es5EntryPoint)}';
-`;
-  const indexES2017Content = `${generatePreamble(config)}
-${polyfillsExport}
-export * from '${relative(loaderPath, es2017EntryPoint)}';
-`;
-  const indexCjsContent = `${generatePreamble(config)}
-module.exports = require('${relative(loaderPath, cjsEntryPoint)}');
-module.exports.applyPolyfills = function() { return Promise.resolve() };
-`;
+  const indexCjsContent = filterAndJoin([
+    generatePreamble(config),
+    `module.exports = require('${relative(loaderPath, cjsEntryPoint)}');`,
+    config.buildEs5 ? `module.exports.applyPolyfills = function() { return Promise.resolve() };` : null,
+  ]);
 
   const indexDtsPath = join(loaderPath, 'index.d.ts');
+
   await Promise.all([
-    compilerCtx.fs.writeFile(join(loaderPath, 'package.json'), packageJsonContent),
     compilerCtx.fs.writeFile(join(loaderPath, 'index.d.ts'), generateIndexDts(indexDtsPath, outputTarget.componentDts)),
     compilerCtx.fs.writeFile(join(loaderPath, 'index.js'), indexContent),
     compilerCtx.fs.writeFile(join(loaderPath, 'index.cjs.js'), indexCjsContent),
@@ -85,7 +74,10 @@ export interface CustomElementsDefineOptions {
   ael?: (el: EventTarget, eventName: string, listener: EventListenerOrEventListenerObject, options: boolean | AddEventListenerOptions) => void;
   rel?: (el: EventTarget, eventName: string, listener: EventListenerOrEventListenerObject, options: boolean | AddEventListenerOptions) => void;
 }
-export declare function defineCustomElements(win?: Window, opts?: CustomElementsDefineOptions): void;
+export declare function defineCustomElements(win?: Window, opts?: CustomElementsDefineOptions): Promise<void>;
+/**
+ * @deprecated
+ */
 export declare function applyPolyfills(): Promise<void>;
 
 /**
@@ -98,3 +90,18 @@ export declare function applyPolyfills(): Promise<void>;
 export declare function setNonce(nonce: string): void;
 `;
 };
+
+/**
+ * Given an array of 'parts' which can be assembled into a string 1) filter
+ * out any parts that are `null` and 2) join the remaining strings into a single
+ * output string
+ *
+ * @param parts an array of parts to filter and join
+ * @returns the joined string
+ */
+function filterAndJoin(parts: (string | null)[]): string {
+  return parts
+    .filter((part) => part !== null)
+    .join('\n')
+    .trim();
+}

@@ -3,7 +3,7 @@ import { BUILD } from '@app-data';
 import type * as d from '../declarations';
 import { PLATFORM_FLAGS } from '../runtime/runtime-constants';
 import { consoleError } from './client-log';
-import { plt, promiseResolve } from './client-window';
+import { plt, promiseResolve, win } from './client-window';
 
 let queueCongestion = 0;
 let queuePending = false;
@@ -11,6 +11,12 @@ let queuePending = false;
 const queueDomReads: d.RafCallback[] = [];
 const queueDomWrites: d.RafCallback[] = [];
 const queueDomWritesLow: d.RafCallback[] = [];
+
+// Fallback to a macrotask when `document.hidden`: `requestAnimationFrame` callbacks
+// do not fire so scheduling flush queues tasks indefinitely. A microtask can't be used
+// because `flush` reschedules itself while work remains, which would never yield to the browser.
+// The 16ms delay keeps flush pacing in line with a ~60fps `requestAnimationFrame`.
+const scheduleFlush = () => (win.document?.hidden ? setTimeout(flush, 16) : plt.raf(flush));
 
 const queueTask = (queue: d.RafCallback[], write: boolean) => (cb: d.RafCallback) => {
   queue.push(cb);
@@ -20,7 +26,7 @@ const queueTask = (queue: d.RafCallback[], write: boolean) => (cb: d.RafCallback
     if (write && plt.$flags$ & PLATFORM_FLAGS.queueSync) {
       nextTick(flush);
     } else {
-      plt.raf(flush);
+      scheduleFlush();
     }
   }
 };
@@ -82,7 +88,7 @@ const flush = () => {
     if ((queuePending = queueDomReads.length + queueDomWrites.length + queueDomWritesLow.length > 0)) {
       // still more to do yet, but we've run out of time
       // let's let this thing cool off and try again in the next tick
-      plt.raf(flush);
+      scheduleFlush();
     } else {
       queueCongestion = 0;
     }
@@ -91,7 +97,7 @@ const flush = () => {
     if ((queuePending = queueDomReads.length > 0)) {
       // still more to do yet, but we've run out of time
       // let's let this thing cool off and try again in the next tick
-      plt.raf(flush);
+      scheduleFlush();
     }
   }
 };

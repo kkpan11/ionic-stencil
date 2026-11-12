@@ -1,12 +1,22 @@
-import { addHostEventListeners } from '@runtime';
+import { BUILD } from '@app-data';
+import { reWireGetterSetter } from '@utils/es2022-rewire-class-members';
 
 import type * as d from '../../declarations';
+import { CMP_FLAGS } from '@utils/constants';
+
+/**
+ * Access transformTag via the closure-scoped $stencilTagTransform object.
+ * This object is defined in the factory closure (HYDRATE_FACTORY_INTRO).
+ * We declare it here to satisfy TypeScript, but at runtime it will be
+ * provided by the factory closure scope.
+ */
+declare const $stencilTagTransform: { transformTag: (tag: string) => string };
 
 let customError: d.ErrorHandler;
 
 export const cmpModules = new Map<string, { [exportName: string]: d.ComponentConstructor }>();
 
-const getModule = (tagName: string): d.ComponentConstructor => {
+const getModule = (tagName: string): d.ComponentConstructor | null => {
   if (typeof tagName === 'string') {
     tagName = tagName.toLowerCase();
     const cmpModule = cmpModules.get(tagName);
@@ -17,7 +27,11 @@ const getModule = (tagName: string): d.ComponentConstructor => {
   return null;
 };
 
-export const loadModule = (cmpMeta: d.ComponentRuntimeMeta, _hostRef: d.HostRef, _hmrVersionId?: string): any => {
+export const loadModule = (
+  cmpMeta: d.ComponentRuntimeMeta,
+  _hostRef: d.HostRef,
+  _hmrVersionId?: string,
+): d.ComponentConstructor | null => {
   return getModule(cmpMeta.$tagName$);
 };
 
@@ -41,18 +55,25 @@ export const registerComponents = (Cstrs: d.ComponentNativeConstructor[]) => {
   for (const Cstr of Cstrs) {
     // using this format so it follows exactly how client-side modules work
     const exportName = Cstr.cmpMeta.$tagName$;
+    // Access transformTag from the closure-scoped $stencilTagTransform object
+    // This ensures we use the same instance as the runner (prevents duplication)
+    const transformedTagName = $stencilTagTransform.transformTag(exportName);
+
     cmpModules.set(exportName, {
       [exportName]: Cstr,
     });
+    if (transformedTagName !== exportName) {
+      cmpModules.set(transformedTagName, {
+        [transformedTagName]: Cstr,
+      });
+    }
   }
 };
 
 export const win = window;
 
-export const doc = win.document;
-
 export const readTask = (cb: Function) => {
-  process.nextTick(() => {
+  nextTick(() => {
     try {
       cb();
     } catch (e) {
@@ -62,7 +83,7 @@ export const readTask = (cb: Function) => {
 };
 
 export const writeTask = (cb: Function) => {
-  process.nextTick(() => {
+  nextTick(() => {
     try {
       cb();
     } catch (e) {
@@ -116,18 +137,31 @@ export const setPlatformHelpers = (helpers: {
   Object.assign(plt, helpers);
 };
 
-export const supportsShadow = false;
+export const supportsShadow = BUILD.shadowDom;
 
 export const supportsListenerOptions = false;
 
 export const supportsConstructableStylesheets = false;
+export const supportsMutableAdoptedStyleSheets = false;
 
-const hostRefs: WeakMap<d.RuntimeRef, d.HostRef> = new WeakMap();
+export const getHostRef = (ref: d.RuntimeRef) => {
+  if (ref.__stencil__getHostRef) {
+    return ref.__stencil__getHostRef();
+  }
 
-export const getHostRef = (ref: d.RuntimeRef) => hostRefs.get(ref);
+  return undefined;
+};
 
-export const registerInstance = (lazyInstance: any, hostRef: d.HostRef) =>
-  hostRefs.set((hostRef.$lazyInstance$ = lazyInstance), hostRef);
+export const registerInstance = (lazyInstance: any, hostRef: d.HostRef) => {
+  if (!hostRef) return undefined;
+  lazyInstance.__stencil__getHostRef = () => hostRef;
+  hostRef.$lazyInstance$ = lazyInstance;
+
+  if (hostRef.$cmpMeta$.$flags$ & CMP_FLAGS.hasModernPropertyDecls && (BUILD.state || BUILD.prop)) {
+    reWireGetterSetter(lazyInstance, hostRef);
+  }
+  return hostRef;
+};
 
 export const registerHost = (elm: d.HostElement, cmpMeta: d.ComponentRuntimeMeta) => {
   const hostRef: d.HostRef = {
@@ -135,14 +169,17 @@ export const registerHost = (elm: d.HostElement, cmpMeta: d.ComponentRuntimeMeta
     $cmpMeta$: cmpMeta,
     $hostElement$: elm,
     $instanceValues$: new Map(),
+    $serializerValues$: new Map(),
     $renderCount$: 0,
   };
+  hostRef.$fetchedCbList$ = [];
   hostRef.$onInstancePromise$ = new Promise((r) => (hostRef.$onInstanceResolve$ = r));
   hostRef.$onReadyPromise$ = new Promise((r) => (hostRef.$onReadyResolve$ = r));
   elm['s-p'] = [];
   elm['s-rc'] = [];
-  addHostEventListeners(elm, hostRef, cmpMeta.$listeners$, false);
-  return hostRefs.set(elm, hostRef);
+  elm.__stencil__getHostRef = () => hostRef;
+
+  return hostRef;
 };
 
 export const Build: d.UserBuildConditionals = {
@@ -153,7 +190,19 @@ export const Build: d.UserBuildConditionals = {
 };
 
 export const styles: d.StyleMap = new Map();
-export const modeResolutionChain: d.ResolutionHandler[] = [];
+export const modeResolver: d.ResolutionHandler[] = [];
+
+/**
+ * Checks to see any components are rendered with `scoped`
+ * @param opts - SSR options
+ */
+export const setScopedSSR = (opts: d.HydrateFactoryOptions) => {
+  scopedSSR =
+    BUILD.shadowDom && opts.serializeShadowRoot !== false && opts.serializeShadowRoot !== 'declarative-shadow-dom';
+};
+export const needsScopedSSR = () => scopedSSR;
+
+let scopedSSR = false;
 
 export { hAsync as h } from './h-async';
 export { hydrateApp } from './hydrate-app';
@@ -175,6 +224,10 @@ export {
   getValue,
   Host,
   insertVdomAnnotations,
+  jsx,
+  jsxDEV,
+  jsxs,
+  Mixin,
   parsePropertyValue,
   postUpdateComponent,
   proxyComponent,
@@ -183,5 +236,7 @@ export {
   setAssetPath,
   setMode,
   setNonce,
+  setTagTransformer,
   setValue,
+  transformTag,
 } from '@runtime';

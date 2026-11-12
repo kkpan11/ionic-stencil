@@ -1,18 +1,23 @@
 import { BUILD } from '@app-data';
-import { addHostEventListeners, doc, getHostRef, nextTick, plt, supportsShadow } from '@platform';
-import { CMP_FLAGS, HOST_FLAGS, MEMBER_FLAGS } from '@utils';
+import { addHostEventListeners, getHostRef, nextTick, plt, supportsShadow, win } from '@platform';
 
 import type * as d from '../declarations';
+import { CMP_FLAGS, HOST_FLAGS, MEMBER_FLAGS } from '../utils/constants';
 import { initializeClientHydrate } from './client-hydrate';
 import { fireConnectedCallback, initializeComponent } from './initialize-component';
 import { createTime } from './profile';
-import { HYDRATE_ID, NODE_TYPE, PLATFORM_FLAGS } from './runtime-constants';
-import { addStyle } from './styles';
+import { HYDRATE_ID, LAZY_LOAD_RETRY_INTERVAL_MS, NODE_TYPE, PLATFORM_FLAGS } from './runtime-constants';
+import { addStyle, getScopeId } from './styles';
 import { attachToAncestor } from './update-component';
+import { insertBefore } from './vdom/vdom-render';
 
 export const connectedCallback = (elm: d.HostElement) => {
   if ((plt.$flags$ & PLATFORM_FLAGS.isTmpDisconnected) === 0) {
     const hostRef = getHostRef(elm);
+    if (!hostRef) {
+      return;
+    }
+
     const cmpMeta = hostRef.$cmpMeta$;
     const endConnected = createTime('connectedCallback', cmpMeta.$tagName$);
 
@@ -34,6 +39,11 @@ export const connectedCallback = (elm: d.HostElement) => {
               ? addStyle(elm.shadowRoot, cmpMeta, elm.getAttribute('s-mode'))
               : addStyle(elm.shadowRoot, cmpMeta);
             elm.classList.remove(scopeId + '-h', scopeId + '-s');
+          } else if (BUILD.scoped && cmpMeta.$flags$ & CMP_FLAGS.scopedCssEncapsulation) {
+            // set the scope id on the element now. Useful when hydrating,
+            // to more quickly set the initial scoped classes for scoped css
+            const scopeId = getScopeId(cmpMeta, BUILD.mode ? elm.getAttribute('s-mode') : undefined);
+            elm['s-sc'] = scopeId;
           }
           initializeClientHydrate(elm, cmpMeta.$tagName$, hostId, hostRef);
         }
@@ -81,7 +91,7 @@ export const connectedCallback = (elm: d.HostElement) => {
       // https://developers.google.com/web/fundamentals/web-components/best-practices#lazy-properties
       if (BUILD.prop && !BUILD.hydrateServerSide && cmpMeta.$members$) {
         Object.entries(cmpMeta.$members$).map(([memberName, [memberFlags]]) => {
-          if (memberFlags & MEMBER_FLAGS.Prop && elm.hasOwnProperty(memberName)) {
+          if (memberFlags & MEMBER_FLAGS.Prop && Object.prototype.hasOwnProperty.call(elm, memberName)) {
             const value = (elm as any)[memberName];
             delete (elm as any)[memberName];
             (elm as any)[memberName] = value;
@@ -107,9 +117,13 @@ export const connectedCallback = (elm: d.HostElement) => {
 
       // fire off connectedCallback() on component instance
       if (hostRef?.$lazyInstance$) {
-        fireConnectedCallback(hostRef.$lazyInstance$);
+        fireConnectedCallback(hostRef.$lazyInstance$, elm);
+      } else if (hostRef.$flags$ & HOST_FLAGS.hasFailedLoad) {
+        // init for this host element failed. Retry now that we're
+        // reconnecting, after a short backoff and while retries remain.
+        setTimeout(() => initializeComponent(elm, hostRef, cmpMeta), LAZY_LOAD_RETRY_INTERVAL_MS);
       } else if (hostRef?.$onReadyPromise$) {
-        hostRef.$onReadyPromise$.then(() => fireConnectedCallback(hostRef.$lazyInstance$));
+        hostRef.$onReadyPromise$.then(() => fireConnectedCallback(hostRef.$lazyInstance$, elm));
       }
     }
 
@@ -118,15 +132,19 @@ export const connectedCallback = (elm: d.HostElement) => {
 };
 
 const setContentReference = (elm: d.HostElement) => {
+  if (!win.document) {
+    return;
+  }
+
   // only required when we're NOT using native shadow dom (slot)
   // or this browser doesn't support native shadow dom
   // and this host element was NOT created with SSR
   // let's pick out the inner content for slot projection
   // create a node to represent where the original
   // content was first placed, which is useful later on
-  const contentRefElm = (elm['s-cr'] = doc.createComment(
+  const contentRefElm = (elm['s-cr'] = win.document.createComment(
     BUILD.isDebug ? `content-ref (host=${elm.localName})` : '',
   ) as any);
   contentRefElm['s-cn'] = true;
-  elm.insertBefore(contentRefElm, elm.firstChild);
+  insertBefore(elm, contentRefElm, elm.firstChild as d.RenderNode);
 };

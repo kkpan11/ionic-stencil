@@ -55,11 +55,12 @@ export const isPrereleaseVersion = (version: string): boolean =>
  * @returns new version's string
  */
 export function getNewVersion(oldVersion: string, input: any): string {
-  if (!isValidVersionInput(input)) {
-    throw new Error(`Version should be either ${SEMVER_INCREMENTS.join(', ')} or a valid semver version.`);
-  }
+  const isValidSemverName = SEMVER_INCREMENTS.indexOf(input) === -1;
+  const incrementedSemverString = semver.inc(oldVersion, input);
 
-  return SEMVER_INCREMENTS.indexOf(input) === -1 ? input : semver.inc(oldVersion, input);
+  if (isValidSemverName) return input;
+  if (incrementedSemverString !== null) return incrementedSemverString;
+  throw new Error(`Version should be either ${SEMVER_INCREMENTS.join(', ')} or a valid semver version.`);
 }
 
 /**
@@ -98,7 +99,7 @@ export function prettyVersionDiff(oldVersion: string, inc: any): string {
  */
 export async function updateChangeLog(opts: BuildOptions): Promise<void> {
   const ccPath = join(opts.nodeModulesDir, '.bin', 'conventional-changelog');
-  const ccConfigPath = join(opts.scriptsBuildDir, 'utils', 'conventional-changelog-config.js');
+  const ccConfigPath = join(__dirname, 'conventional-changelog-config.js');
   const { execa } = await import('execa');
   // API Docs for conventional-changelog: https://github.com/conventional-changelog/conventional-changelog/tree/master/packages/conventional-changelog-core#api
   await execa(

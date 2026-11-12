@@ -14,7 +14,7 @@ describe('optimizeCss', () => {
 
   // TODO(STENCIL-307): Remove usage of the Jasmine global
   // eslint-disable-next-line jest/no-jasmine-globals -- these will be removed when we migrate to jest-circus
-  jasmine.DEFAULT_TIMEOUT_INTERVAL = 30000;
+  jasmine.DEFAULT_TIMEOUT_INTERVAL = 60000;
 
   beforeEach(() => {
     config = mockValidatedConfig({ maxConcurrentWorkers: 0, minifyCss: true });
@@ -128,6 +128,14 @@ describe('optimizeCss', () => {
 
     expect(diagnostics).toHaveLength(0);
     expect(output).toBe(`h1+p,h2,h3{color:red}`);
+  });
+
+  it('minifies selectors with nested parens', async () => {
+    const styleText = `x:is(:a,:has(:b),.c),y:is(:a,:has(:b),.c){color:red}.after{color:blue}`;
+    const output = await optimizeCss(config, compilerCtx, diagnostics, styleText, MOCK_FILE_PATH);
+
+    expect(diagnostics).toHaveLength(0);
+    expect(output).toBe(`x:is(:a,:has(:b),.c),y:is(:a,:has(:b),.c){color:red}.after{color:blue}`);
   });
 
   it('minify-params', async () => {

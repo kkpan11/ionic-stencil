@@ -13,9 +13,16 @@ export const enum MEMBER_FLAGS {
   ReflectAttr = 1 << 9,
   Mutable = 1 << 10,
 
+  Getter = 1 << 11,
+  Setter = 1 << 12,
+
   Prop = String | Number | Boolean | Any | Unknown,
-  HasAttribute = String | Number | Boolean | Any,
+  HasAttribute = String | Number | Boolean | Any | Unknown,
   PropLike = Prop | State,
+}
+
+export const enum WATCH_FLAGS {
+  Immediate = 1 << 0,
 }
 
 export const enum EVENT_FLAGS {
@@ -49,10 +56,16 @@ export const enum HOST_FLAGS {
   isWatchReady = 1 << 7,
   isListenReady = 1 << 8,
   needsRerender = 1 << 9,
+  /**
+   * Set when a lazy component's dynamic `import()` fails to resolve a a
+   * constructor. Distinct from `hasInitializedComponent` being unset, which
+   * is true while an initialization attempt is merely queued/in-flight.
+   */
+  hasFailedLoad = 1 << 10,
 
   // DEV ONLY
-  devOnRender = 1 << 10,
-  devOnDidLoad = 1 << 11,
+  devOnRender = 1 << 11,
+  devOnDidLoad = 1 << 12,
 }
 
 /**
@@ -110,18 +123,34 @@ export const enum CMP_FLAGS {
    * options passed to the `@Component` decorator.
    */
   formAssociated = 1 << 6,
+
+  /**
+   * Determines if a `shadow: true` component needs
+   * to have its styles scoped during SSR as opposed to using DSD.
+   */
+  shadowNeedsScopedCss = 1 << 7,
+
+  /**
+   * Determines if a component has a `<slot>` in its template.
+   */
+  hasSlot = 1 << 8,
+
+  /**
+   * Determines if a component uses modern class property declarations.
+   */
+  hasModernPropertyDecls = 1 << 9,
+
+  /**
+   * Determines if `slotAssignment` is set to `'manual'` for a component that uses the shadow DOM.
+   * e.g. `shadow: { slotAssignment: 'manual' }` is set on the `@Component()` decorator
+   */
+  shadowSlotAssignmentManual = 1 << 10,
 }
 
 /**
  * Default style mode id
  */
 export const DEFAULT_STYLE_MODE = '$';
-
-/**
- * Reusable empty obj/array
- * Don't add values to these!!
- */
-export const EMPTY_OBJ: Record<never, never> = {};
 
 /**
  * Namespaces
@@ -193,6 +222,10 @@ export const DOCS_README = 'docs-readme';
  */
 export const DOCS_VSCODE = 'docs-vscode';
 /**
+ * Constant for the 'docs-custom-elements-manifest' output target
+ */
+export const DOCS_CUSTOM_ELEMENTS_MANIFEST = 'docs-custom-elements-manifest';
+/**
  * Constant for the 'stats' output target
  */
 export const STATS = 'stats';
@@ -223,6 +256,7 @@ export const VALID_CONFIG_OUTPUT_TARGETS = [
   DOCS_README,
   DOCS_VSCODE,
   DOCS_CUSTOM,
+  DOCS_CUSTOM_ELEMENTS_MANIFEST,
 
   // MISC
   COPY,
@@ -231,3 +265,65 @@ export const VALID_CONFIG_OUTPUT_TARGETS = [
 ] as const;
 
 export const GENERATED_DTS = 'components.d.ts';
+
+/**
+ * DOM Node types
+ *
+ * See https://developer.mozilla.org/en-US/docs/Web/API/Node/nodeType
+ *
+ * Note: this is a duplicate of the `NODE_TYPES` enum in mock-doc, it's
+ * copied over here so that we do not need to introduce a dependency on the
+ * mock-doc bundle in the runtime. See
+ * https://github.com/stenciljs/core/pull/5705 for more details.
+ */
+export const enum NODE_TYPES {
+  ELEMENT_NODE = 1,
+  ATTRIBUTE_NODE = 2,
+  TEXT_NODE = 3,
+  CDATA_SECTION_NODE = 4,
+  ENTITY_REFERENCE_NODE = 5,
+  ENTITY_NODE = 6,
+  PROCESSING_INSTRUCTION_NODE = 7,
+  COMMENT_NODE = 8,
+  DOCUMENT_NODE = 9,
+  DOCUMENT_TYPE_NODE = 10,
+  DOCUMENT_FRAGMENT_NODE = 11,
+  NOTATION_NODE = 12,
+}
+
+/**
+ * Represents a primitive type.
+ * Described in https://w3c.github.io/webdriver-bidi/#type-script-PrimitiveProtocolValue.
+ */
+export enum PrimitiveType {
+  Undefined = 'undefined',
+  Null = 'null',
+  String = 'string',
+  Number = 'number',
+  SpecialNumber = 'number',
+  Boolean = 'boolean',
+  BigInt = 'bigint',
+}
+
+/**
+ * Represents a non-primitive type.
+ * Described in https://w3c.github.io/webdriver-bidi/#type-script-RemoteValue.
+ * @deprecated will be removed in v5. Use `@AttrDeserialize()` / `@PropDeserialize()` decorators instead.
+ */
+export enum NonPrimitiveType {
+  Array = 'array',
+  Date = 'date',
+  Map = 'map',
+  Object = 'object',
+  RegularExpression = 'regexp',
+  Set = 'set',
+  Channel = 'channel',
+  Symbol = 'symbol',
+}
+
+/**  @deprecated will be removed in v5. Use `@AttrDeserialize()` / `@PropDeserialize()` decorators instead. */
+export const TYPE_CONSTANT = 'type';
+/**  @deprecated will be removed in v5. Use `@AttrDeserialize()` / `@PropDeserialize()` decorators instead. */
+export const VALUE_CONSTANT = 'value';
+/**  @deprecated will be removed in v5. Use `@AttrDeserialize()` / `@PropDeserialize()` decorators instead. */
+export const SERIALIZED_PREFIX = 'serialized:';

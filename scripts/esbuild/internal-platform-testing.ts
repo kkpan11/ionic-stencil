@@ -4,7 +4,7 @@ import { join } from 'path';
 
 import { BuildOptions } from '../utils/options';
 import { writePkgJson } from '../utils/write-pkg-json';
-import { externalAlias, getBaseEsbuildOptions, getEsbuildAliases, getEsbuildExternalModules } from './util';
+import { externalAlias, externalNodeModules, getBaseEsbuildOptions, getEsbuildAliases } from './utils';
 
 /**
  * Get an ESBuild configuration object for the internal testing bundle. This
@@ -28,12 +28,18 @@ export async function getInternalTestingBundle(opts: BuildOptions): Promise<ESBu
     main: 'index.js',
   });
 
+  // Copy JSX runtime files for automatic JSX transform support
+  const srcJsxDir = join(opts.srcDir, 'internal', 'testing');
+  const jsxFiles = ['jsx-runtime.js', 'jsx-runtime.d.ts', 'jsx-dev-runtime.js', 'jsx-dev-runtime.d.ts'];
+  await Promise.all(jsxFiles.map((file) => fs.copyFile(join(srcJsxDir, file), join(outputTestingPlatformDir, file))));
+
   const internalTestingAliases = {
     ...getEsbuildAliases(),
     '@platform': inputTestingPlatform,
+    '@stencil/core/mock-doc': '../../mock-doc/index.cjs',
   };
 
-  const external = [...getEsbuildExternalModules(opts, opts.output.internalDir), '@stencil/core/mock-doc'];
+  const external: string[] = [...externalNodeModules, '../../mock-doc/index.cjs'];
 
   const internalTestingBuildOptions: ESBuildOptions = {
     ...getBaseEsbuildOptions(),

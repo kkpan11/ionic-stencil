@@ -19,6 +19,7 @@ import {
 } from './constants';
 import { validateOutputTargets } from './outputs';
 import { validateDevServer } from './validate-dev-server';
+import { validateDocs } from './validate-docs';
 import { validateHydrated } from './validate-hydrated';
 import { validateDistNamespace } from './validate-namespace';
 import { validateNamespace } from './validate-namespace';
@@ -124,6 +125,7 @@ export const validateConfig = (
     devMode,
     extras: config.extras || {},
     flags,
+    generateExportMaps: isBoolean(config.generateExportMaps) ? config.generateExportMaps : false,
     hashFileNames,
     hashedFileNameLength: config.hashedFileNameLength ?? DEFAULT_HASHED_FILENAME_LENGTH,
     hydratedFlag: validateHydrated(config),
@@ -133,8 +135,11 @@ export const validateConfig = (
     minifyJs: config.minifyJs ?? !devMode,
     outputTargets: config.outputTargets ?? [],
     rollupConfig: validateRollupConfig(config),
+    sourceMap:
+      config.sourceMap === true || (devMode && (config.sourceMap === 'dev' || typeof config.sourceMap === 'undefined')),
     sys: config.sys ?? bootstrapConfig.sys ?? createNodeSys({ logger }),
     testing: config.testing ?? {},
+    docs: validateDocs(config, logger),
     transformAliasedImportPaths: isBoolean(userConfig.transformAliasedImportPaths)
       ? userConfig.transformAliasedImportPaths
       : true,
@@ -143,10 +148,21 @@ export const validateConfig = (
     ...validatePaths(config),
   };
 
+  // Set the log file path on the logger if writeLog is enabled
+  if (validatedConfig.buildLogFilePath) {
+    logger.setLogFilePath(validatedConfig.buildLogFilePath);
+  }
+
   validatedConfig.extras.lifecycleDOMEvents = !!validatedConfig.extras.lifecycleDOMEvents;
   validatedConfig.extras.scriptDataOpts = !!validatedConfig.extras.scriptDataOpts;
   validatedConfig.extras.initializeNextTick = !!validatedConfig.extras.initializeNextTick;
   validatedConfig.extras.tagNameTransform = !!validatedConfig.extras.tagNameTransform;
+  validatedConfig.extras.additionalTagTransformers =
+    validatedConfig.extras.additionalTagTransformers === true ||
+    (!devMode && validatedConfig.extras.additionalTagTransformers === 'prod');
+  validatedConfig.extras.addGlobalStyleToComponents = isBoolean(validatedConfig.extras.addGlobalStyleToComponents)
+    ? validatedConfig.extras.addGlobalStyleToComponents
+    : 'client';
 
   // TODO(STENCIL-914): remove when `experimentalSlotFixes` is the default behavior
   // If the user set `experimentalSlotFixes` and any individual slot fix flags to `false`, we need to log a warning
@@ -157,6 +173,7 @@ export const validateConfig = (
       'slotChildNodesFix',
       'cloneNodeFix',
       'scopedSlotTextContentFix',
+      'experimentalScopedSlotChanges',
     ];
     const conflictingFlags = possibleFlags.filter((flag) => validatedConfig.extras[flag] === false);
     if (conflictingFlags.length > 0) {
@@ -175,22 +192,16 @@ export const validateConfig = (
     validatedConfig.extras.cloneNodeFix = true;
     validatedConfig.extras.slotChildNodesFix = true;
     validatedConfig.extras.scopedSlotTextContentFix = true;
+    validatedConfig.extras.experimentalScopedSlotChanges = true;
   } else {
     validatedConfig.extras.appendChildSlotFix = !!validatedConfig.extras.appendChildSlotFix;
     validatedConfig.extras.cloneNodeFix = !!validatedConfig.extras.cloneNodeFix;
     validatedConfig.extras.slotChildNodesFix = !!validatedConfig.extras.slotChildNodesFix;
     validatedConfig.extras.scopedSlotTextContentFix = !!validatedConfig.extras.scopedSlotTextContentFix;
+    // TODO(STENCIL-1086): remove this option when it's the default behavior
+    validatedConfig.extras.experimentalScopedSlotChanges = !!validatedConfig.extras.experimentalScopedSlotChanges;
   }
 
-  // TODO(STENCIL-1086): remove this option when it's the default behavior
-  validatedConfig.extras.experimentalScopedSlotChanges = !!validatedConfig.extras.experimentalScopedSlotChanges;
-
-  setBooleanConfig(
-    validatedConfig,
-    'sourceMap',
-    null,
-    typeof validatedConfig.sourceMap === 'undefined' ? true : validatedConfig.sourceMap,
-  );
   setBooleanConfig(validatedConfig, 'watch', 'watch', false);
   setBooleanConfig(validatedConfig, 'buildDocs', 'docs', !validatedConfig.devMode);
   setBooleanConfig(validatedConfig, 'buildDist', 'esm', !validatedConfig.devMode || !!validatedConfig.buildEs5);
@@ -200,6 +211,8 @@ export const validateConfig = (
   setBooleanConfig(validatedConfig, 'autoprefixCss', null, validatedConfig.buildEs5);
   setBooleanConfig(validatedConfig, 'validateTypes', null, !validatedConfig._isTesting);
   setBooleanConfig(validatedConfig, 'allowInlineScripts', null, true);
+  setBooleanConfig(validatedConfig, 'suppressReservedPublicNameWarnings', null, false);
+  setBooleanConfig(validatedConfig, 'suppressReservedEventNameWarnings', null, false);
 
   if (!isString(validatedConfig.taskQueue)) {
     validatedConfig.taskQueue = 'async';
@@ -243,6 +256,11 @@ export const validateConfig = (
     validatedConfig.bundles = [];
   }
 
+  // exclude components (tag list)
+  if (!Array.isArray(validatedConfig.excludeComponents)) {
+    validatedConfig.excludeComponents = [];
+  }
+
   // validate how many workers we can use
   validateWorkers(validatedConfig);
 
@@ -271,7 +289,7 @@ export const validateConfig = (
     const warn = buildWarn(diagnostics);
     // this message is particularly long - let the underlying logger implementation take responsibility for breaking it
     // up to fit in a terminal window
-    warn.messageText = `nodeResolve.customResolveOptions is a deprecated option in a Stencil Configuration file. If you need this option, please open a new issue in the Stencil repository (https://github.com/ionic-team/stencil/issues/new/choose)`;
+    warn.messageText = `nodeResolve.customResolveOptions is a deprecated option in a Stencil Configuration file. If you need this option, please open a new issue in the Stencil repository (https://github.com/stenciljs/core/issues/new/choose)`;
   }
 
   CACHED_VALIDATED_CONFIG = validatedConfig;

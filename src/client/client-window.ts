@@ -2,9 +2,11 @@ import { BUILD } from '@app-data';
 
 import type * as d from '../declarations';
 
-export const win = typeof window !== 'undefined' ? window : ({} as Window);
+interface StencilWindow extends Omit<Window, 'document'> {
+  document?: Document;
+}
 
-export const doc = win.document || ({ head: {} } as Document);
+export const win = (typeof window !== 'undefined' ? window : ({} as StencilWindow)) as StencilWindow;
 
 export const H = ((win as any).HTMLElement || (class {} as any)) as HTMLElement;
 
@@ -28,16 +30,12 @@ export const setPlatformHelpers = (helpers: {
   Object.assign(plt, helpers);
 };
 
-export const supportsShadow =
-  // TODO(STENCIL-854): Remove code related to legacy shadowDomShim field
-  BUILD.shadowDomShim && BUILD.shadowDom
-    ? /*@__PURE__*/ (() => (doc.head.attachShadow + '').indexOf('[native') > -1)()
-    : true;
+export const supportsShadow = BUILD.shadowDom;
 
 export const supportsListenerOptions = /*@__PURE__*/ (() => {
   let supportsListenerOptions = false;
   try {
-    doc.addEventListener(
+    win.document?.addEventListener(
       'e',
       null,
       Object.defineProperty({}, 'passive', {
@@ -55,11 +53,20 @@ export const promiseResolve = (v?: any) => Promise.resolve(v);
 export const supportsConstructableStylesheets = BUILD.constructableCSS
   ? /*@__PURE__*/ (() => {
       try {
+        if (!win.document.adoptedStyleSheets) {
+          return false;
+        }
         new CSSStyleSheet();
         return typeof new CSSStyleSheet().replaceSync === 'function';
       } catch (e) {}
       return false;
     })()
+  : false;
+
+// https://github.com/salesforce/lwc/blob/5af18fdd904bc6cfcf7b76f3c539490ff11515b2/packages/%40lwc/engine-dom/src/renderer.ts#L41-L43
+export const supportsMutableAdoptedStyleSheets = supportsConstructableStylesheets
+  ? /*@__PURE__*/ (() =>
+      !!win.document && Object.getOwnPropertyDescriptor(win.document.adoptedStyleSheets, 'length')!.writable)()
   : false;
 
 export { H as HTMLElement };

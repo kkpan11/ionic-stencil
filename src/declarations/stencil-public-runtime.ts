@@ -1,8 +1,12 @@
-declare type CustomMethodDecorator<T> = (
-  target: Object,
+type CustomMethodDecorator<T> = (
+  target: object,
   propertyKey: string | symbol,
   descriptor: TypedPropertyDescriptor<T>,
 ) => TypedPropertyDescriptor<T> | void;
+
+type UnionToIntersection<U> = (U extends any ? (k: U) => void : never) extends (k: infer I) => void ? I : never;
+
+type MixinInstance<F> = F extends (base: MixedInCtor) => MixedInCtor<infer I> ? I : never;
 
 export interface ComponentDecorator {
   (opts?: ComponentOptions): ClassDecorator;
@@ -71,6 +75,12 @@ export interface ShadowRootOptions {
    * focusable part is given focus, and the shadow host is given any available `:focus` styling.
    */
   delegatesFocus?: boolean;
+  /**
+   * Sets the slot assignment mode for the shadow root. When set to `'manual'`, enables imperative
+   * slotting using the `HTMLSlotElement.assign()` method. Defaults to `'named'` for standard
+   * declarative slotting behavior.
+   */
+  slotAssignment?: 'manual' | 'named';
 }
 
 export interface ModeStyles {
@@ -136,12 +146,34 @@ export interface EventOptions {
   composed?: boolean;
 }
 
+export interface AttachInternalsOptions {
+  /**
+   * Initial custom states to set on the ElementInternals.states CustomStateSet.
+   * Each key is the state name and the value is the initial boolean state.
+   *
+   * These states can be targeted with the CSS `:state()` pseudo-class.
+   *
+   * @example
+   * ```tsx
+   * @AttachInternals({ states: { open: true, active: false } })
+   * internals: ElementInternals;
+   * ```
+   *
+   * @see https://developer.mozilla.org/en-US/docs/Web/API/CustomStateSet
+   */
+  states?: { [stateName: string]: boolean };
+}
+
 export interface AttachInternalsDecorator {
-  (): PropertyDecorator;
+  (opts?: AttachInternalsOptions): PropertyDecorator;
 }
 
 export interface ListenDecorator {
   (eventName: string, opts?: ListenOptions): CustomMethodDecorator<any>;
+}
+
+export interface ResolveVarFunction {
+  <T>(variable: T): string;
 }
 export interface ListenOptions {
   /**
@@ -176,7 +208,20 @@ export interface StateDecorator {
 }
 
 export interface WatchDecorator {
-  (propName: string): CustomMethodDecorator<any>;
+  (
+    propName: any,
+    watchOptions?: {
+      immediate?: boolean;
+    },
+  ): CustomMethodDecorator<(newValue?: any, oldValue?: any, propName?: any, ...args: any[]) => any | void>;
+}
+
+export interface PropSerializeDecorator {
+  (propName: any): CustomMethodDecorator<(newValue?: any, propName?: string, ...args: any[]) => string | null>;
+}
+
+export interface AttrDeserializeDecorator {
+  (propName: any): CustomMethodDecorator<(newValue?: any, propName?: string, ...args: any[]) => any>;
 }
 
 export interface UserBuildConditionals {
@@ -233,6 +278,25 @@ export declare const AttachInternals: AttachInternalsDecorator;
 export declare const Listen: ListenDecorator;
 
 /**
+ * The `resolveVar()` function is a compile-time utility that resolves const variables
+ * and object properties to their string literal values. This allows variables to be
+ * used in `@Listen` and `@Event` decorators instead of hardcoded strings.
+ *
+ * @example
+ * ```ts
+ * const MY_EVENT = 'myEvent';
+ * @Listen(resolveVar(MY_EVENT))
+ * ```
+ *
+ * @example
+ * ```ts
+ * const EVENTS = { MY_EVENT: 'myEvent' } as const;
+ * @Event({ eventName: resolveVar(EVENTS.MY_EVENT) })
+ * ```
+ */
+export declare const resolveVar: ResolveVarFunction;
+
+/**
  * The `@Method()` decorator is used to expose methods on the public API.
  * Class methods decorated with the @Method() decorator can be called directly
  * from the element, meaning they are intended to be callable from the outside.
@@ -269,6 +333,16 @@ export declare const State: StateDecorator;
  */
 export declare const Watch: WatchDecorator;
 
+/**
+ * Decorator to serialize a property to an attribute string.
+ */
+export declare const PropSerialize: PropSerializeDecorator;
+
+/**
+ * Decorator to deserialize an attribute string to a property.
+ */
+export declare const AttrDeserialize: AttrDeserializeDecorator;
+
 export type ResolutionHandler = (elm: HTMLElement) => string | undefined | null;
 
 export type ErrorHandler = (err: any, element?: HTMLElement) => void;
@@ -301,6 +375,26 @@ export declare function setPlatformHelpers(helpers: {
  * @returns the base path
  */
 export declare function getAssetPath(path: string): string;
+
+/**
+ * Method to render a virtual DOM tree to a container element.
+ *
+ * @example
+ * ```tsx
+ * import { render } from '@stencil/core';
+ *
+ * const vnode = (
+ *   <div>
+ *     <h1>Hello, world!</h1>
+ *   </div>
+ * );
+ * render(vnode, document.body);
+ * ```
+ *
+ * @param vnode - The virtual DOM tree to render
+ * @param container - The container element to render the virtual DOM tree to
+ */
+export declare function render(vnode: VNode, container: Element): void;
 
 /**
  * Used to manually set the base path where assets can be found. For lazy-loaded
@@ -380,6 +474,68 @@ export declare function readTask(task: RafCallback): void;
  * Unhandled exception raised while rendering, during event handling, or lifecycles will trigger the custom event handler.
  */
 export declare const setErrorHandler: (handler: ErrorHandler) => void;
+
+export type TagTransformer = (tag: string) => string;
+
+/**
+ * Sets a tag transformer to be used when rendering your custom elements.
+ * ```ts
+ * setTagTransformer((tag) => {
+ *  if (tag.startsWith('my-')) return `new-${tag}`
+ *  return tag;
+ * });
+ * ```
+ * Will mean all your components that start with `my-` are defined instead with `new-my-` prefix.
+ *
+ * @param transformer the transformer function to use which must return a string.
+ */
+export declare function setTagTransformer(transformer: TagTransformer): void;
+
+/**
+ * Transforms a tag name using a transformer set via `setTagTransformer`
+ *
+ * @param tag - the tag to transform e.g. `my-tag`
+ * @returns the transformed tag e.g. `new-my-tag`
+ */
+export declare function transformTag(tag: string): string;
+
+/**
+ * @deprecated - Use `MixedInCtor` instead:
+ * ```ts
+ * import { MixedInCtor } from '@stencil/core';
+ *
+ * const AFactoryFn = <B extends MixedInCtor>(Base: B) => {class A extends Base { propA = A }; return A;}
+ * ```
+ */
+export type MixinFactory = (base: MixedInCtor) => MixedInCtor;
+
+// TODO ^ do not remove. Just do not export when deprecated.
+
+export type MixedInCtor<T = {}> = new (...args: any[]) => T;
+
+/**
+ * Compose multiple mixin classes into a single constructor.
+ * The resulting class has the combined instance types of all mixed-in classes.
+ *
+ * Example:
+ * ```ts
+ * import { Mixin, MixedInCtor } from '@stencil/core';
+ *
+ * const AWrap = <B extends MixedInCtor>(Base: B) => {class A extends Base { propA = A }; return A;}
+ * const BWrap = <B extends MixedInCtor>(Base: B) => {class B extends Base { propB = B }; return B;}
+ * const CWrap = <B extends MixedInCtor>(Base: B) => {class C extends Base { propC = C }; return C;}
+ *
+ * class X extends Mixin(AWrap, BWrap, CWrap) {
+ *   render() { return <div>{this.propA} {this.propB} {this.propC}</div>; }
+ * }
+ * ```
+ *
+ * @param mixinFactories mixin factory functions that return a class which extends from the provided class.
+ * @returns a class that is composed from extending each of the provided classes in the order they were provided.
+ */
+export declare function Mixin<const TMixins extends readonly MixinFactory[]>(
+  ...mixinFactories: TMixins
+): abstract new (...args: any[]) => UnionToIntersection<MixinInstance<TMixins[number]>>;
 
 /**
  * This file gets copied to all distributions of stencil component collections.
@@ -570,7 +726,7 @@ export interface FunctionalUtilities {
 }
 
 export interface FunctionalComponent<T = {}> {
-  (props: T, children: VNode[], utils: FunctionalUtilities): VNode | VNode[];
+  (props: T, children: VNode[], utils: FunctionalUtilities): VNode | VNode[] | null;
 }
 
 /**
@@ -617,6 +773,7 @@ export declare namespace h {
   export function h(sel: any, data: VNodeData | null, text: string): VNode;
   export function h(sel: any, data: VNodeData | null, children: Array<VNode | undefined | null>): VNode;
   export function h(sel: any, data: VNodeData | null, children: VNode): VNode;
+  export function h(sel: any, data: VNodeData | null, ...children: (VNode | string | number)[]): VNode;
 
   export namespace JSX {
     interface IntrinsicElements extends LocalJSX.IntrinsicElements, JSXBase.IntrinsicElements {
@@ -635,6 +792,46 @@ export declare function h(sel: any, children: Array<VNode | undefined | null>): 
 export declare function h(sel: any, data: VNodeData | null, text: string): VNode;
 export declare function h(sel: any, data: VNodeData | null, children: Array<VNode | undefined | null>): VNode;
 export declare function h(sel: any, data: VNodeData | null, children: VNode): VNode;
+export declare function h(sel: any, data: VNodeData | null, ...children: (VNode | string | number)[]): VNode;
+
+/**
+ * Automatic JSX runtime functions for TypeScript's react-jsx mode.
+ * These functions are called automatically by TypeScript when using "jsx": "react-jsx".
+ * @param type type of node
+ * @param props properties of node
+ * @param key optional key for the node
+ * @returns a jsx vnode
+ */
+export declare function jsx(type: any, props: any, key?: string): VNode;
+
+/**
+ * Automatic JSX runtime functions for TypeScript's react-jsxmode with multiple children.
+ * @param type type of node
+ * @param props properties of node
+ * @param key optional key for the node
+ * @returns a jsx vnode
+ */
+export declare function jsxs(type: any, props: any, key?: string): VNode;
+
+/**
+ * Automatic JSX runtime functions for TypeScript's react-jsxdev mode.
+ * These functions are called automatically by TypeScript when using "jsx": "react-jsxdev".
+ * @param type type of node
+ * @param props properties of node
+ * @param key optional key for the node
+ * @param isStaticChildren indicates if the children are static
+ * @param source source information
+ * @param self reference to the component instance
+ * @returns a jsx vnode
+ */
+export declare function jsxDEV(
+  type: any,
+  props: any,
+  key?: string | number,
+  isStaticChildren?: boolean,
+  source?: any,
+  self?: any,
+): VNode;
 
 /**
  * A virtual DOM node
@@ -666,7 +863,7 @@ export { LocalJSX as JSX };
 export namespace JSXBase {
   export interface IntrinsicElements {
     // Stencil elements
-    slot: JSXBase.SlotAttributes;
+    slot: JSXBase.SlotAttributes<HTMLSlotElement>;
 
     // HTML
     a: JSXBase.AnchorHTMLAttributes<HTMLAnchorElement>;
@@ -841,7 +1038,7 @@ export namespace JSXBase {
     view: JSXBase.SVGAttributes;
   }
 
-  export interface SlotAttributes extends JSXAttributes {
+  export interface SlotAttributes<T = HTMLSlotElement> extends JSXAttributes<T> {
     name?: string;
     slot?: string;
     onSlotchange?: (event: Event) => void;
@@ -853,6 +1050,7 @@ export namespace JSXBase {
     hrefLang?: string;
     hreflang?: string;
     media?: string;
+    ping?: string;
     rel?: string;
     target?: string;
     referrerPolicy?: ReferrerPolicy;
@@ -883,7 +1081,6 @@ export namespace JSXBase {
   }
 
   export interface ButtonHTMLAttributes<T> extends HTMLAttributes<T> {
-    autoFocus?: boolean;
     disabled?: boolean;
     form?: string;
     formAction?: string;
@@ -904,6 +1101,11 @@ export namespace JSXBase {
     popoverTargetAction?: string;
     popoverTargetElement?: Element | null;
     popoverTarget?: string;
+
+    // invoker commands
+    command?: string;
+    commandFor?: string;
+    commandfor?: string;
   }
 
   export interface CanvasHTMLAttributes<T> extends HTMLAttributes<T> {
@@ -921,7 +1123,8 @@ export namespace JSXBase {
 
   export interface DetailsHTMLAttributes<T> extends HTMLAttributes<T> {
     open?: boolean;
-    onToggle?: (event: Event) => void;
+    name?: string;
+    onToggle?: (event: ToggleEvent) => void;
   }
 
   export interface DelHTMLAttributes<T> extends HTMLAttributes<T> {
@@ -935,6 +1138,7 @@ export namespace JSXBase {
     onClose?: (event: Event) => void;
     open?: boolean;
     returnValue?: string;
+    closedby?: 'any' | 'closerequest' | 'none';
   }
 
   export interface EmbedHTMLAttributes<T> extends HTMLAttributes<T> {
@@ -977,6 +1181,8 @@ export namespace JSXBase {
     allowtransparency?: string | boolean;
     frameBorder?: number | string;
     frameborder?: number | string;
+    fetchPriority?: 'high' | 'low' | 'auto';
+    fetchpriority?: 'high' | 'low' | 'auto';
     importance?: 'low' | 'auto' | 'high';
     height?: number | string;
     loading?: 'lazy' | 'auto' | 'eager';
@@ -1000,9 +1206,12 @@ export namespace JSXBase {
     crossOrigin?: string;
     crossorigin?: string;
     decoding?: 'async' | 'auto' | 'sync';
+    fetchPriority?: 'high' | 'low' | 'auto';
+    fetchpriority?: 'high' | 'low' | 'auto';
     importance?: 'low' | 'auto' | 'high';
     height?: number | string;
     loading?: 'lazy' | 'auto' | 'eager';
+    referrerPolicy?: ReferrerPolicy;
     sizes?: string;
     src?: string;
     srcSet?: string;
@@ -1026,8 +1235,6 @@ export namespace JSXBase {
     autocapitalize?: string;
     autoComplete?: string;
     autocomplete?: string;
-    autoFocus?: boolean;
-    autofocus?: boolean | string;
     capture?: string; // https://www.w3.org/TR/html-media-capture/#the-capture-attribute
     checked?: boolean;
     crossOrigin?: string;
@@ -1087,8 +1294,6 @@ export namespace JSXBase {
   }
 
   export interface KeygenHTMLAttributes<T> extends HTMLAttributes<T> {
-    autoFocus?: boolean;
-    autofocus?: boolean | string;
     challenge?: string;
     disabled?: boolean;
     form?: string;
@@ -1102,7 +1307,6 @@ export namespace JSXBase {
   export interface LabelHTMLAttributes<T> extends HTMLAttributes<T> {
     form?: string;
     htmlFor?: string;
-    htmlfor?: string;
   }
 
   export interface LiHTMLAttributes<T> extends HTMLAttributes<T> {
@@ -1111,6 +1315,8 @@ export namespace JSXBase {
 
   export interface LinkHTMLAttributes<T> extends HTMLAttributes<T> {
     as?: string;
+    fetchPriority?: 'high' | 'low' | 'auto';
+    fetchpriority?: 'high' | 'low' | 'auto';
     href?: string;
     hrefLang?: string;
     hreflang?: string;
@@ -1134,6 +1340,8 @@ export namespace JSXBase {
     autoPlay?: boolean;
     autoplay?: boolean | string;
     controls?: boolean;
+    controlslist?: 'nodownload' | 'nofullscreen' | 'noremoteplayback';
+    controlsList?: 'nodownload' | 'nofullscreen' | 'noremoteplayback';
     crossOrigin?: string;
     crossorigin?: string;
     loop?: boolean;
@@ -1228,7 +1436,6 @@ export namespace JSXBase {
   export interface OutputHTMLAttributes<T> extends HTMLAttributes<T> {
     form?: string;
     htmlFor?: string;
-    htmlfor?: string;
     name?: string;
   }
 
@@ -1249,6 +1456,8 @@ export namespace JSXBase {
     crossOrigin?: string;
     crossorigin?: string;
     defer?: boolean;
+    fetchPriority?: 'high' | 'low' | 'auto';
+    fetchpriority?: 'high' | 'low' | 'auto';
     importance?: 'low' | 'auto' | 'high';
     integrity?: string;
     nonce?: string;
@@ -1257,7 +1466,6 @@ export namespace JSXBase {
   }
 
   export interface SelectHTMLAttributes<T> extends HTMLAttributes<T> {
-    autoFocus?: boolean;
     disabled?: boolean;
     form?: string;
     multiple?: boolean;
@@ -1296,8 +1504,6 @@ export namespace JSXBase {
   export interface TextareaHTMLAttributes<T> extends HTMLAttributes<T> {
     autoComplete?: string;
     autocomplete?: string;
-    autoFocus?: boolean;
-    autofocus?: boolean | string;
     cols?: number;
     disabled?: boolean;
     form?: string;
@@ -1359,6 +1565,8 @@ export namespace JSXBase {
 
     // Standard HTML Attributes
     accessKey?: string;
+    autoFocus?: boolean;
+    autofocus?: boolean | string;
     class?: string | { [className: string]: boolean };
     contentEditable?: boolean | string;
     contenteditable?: boolean | string;
@@ -1366,7 +1574,7 @@ export namespace JSXBase {
     contextmenu?: string;
     dir?: string;
     draggable?: boolean;
-    hidden?: boolean;
+    hidden?: boolean | 'until-found';
     id?: string;
     inert?: boolean;
     lang?: string;
@@ -1375,11 +1583,15 @@ export namespace JSXBase {
     tabIndex?: number;
     tabindex?: number | string;
     title?: string;
+    // `(string & {})` keeps autocomplete without rejecting vals spread from an object literal
+    translate?: 'yes' | 'no' | (string & {});
     // These types don't allow you to use popover as a boolean attribute
     // so you can't write HTML like `<div popover>` and get the default value.
     // Developer must explicitly specify one of the valid popover values or it will fallback
     // to `manual` (following the HTML spec).
     popover?: string | null;
+    focusgroup?: string;
+    focusgroupstart?: boolean;
 
     // Unknown
     inputMode?: string;
@@ -1702,7 +1914,23 @@ export namespace JSXBase {
     zoomAndPan?: string;
   }
 
-  export interface DOMAttributes<T> extends JSXAttributes<T> {
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/ToggleEvent) */
+  export interface ToggleEvent extends Event {
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/ToggleEvent/newState) */
+    readonly newState: string;
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/ToggleEvent/oldState) */
+    readonly oldState: string;
+  }
+
+  // The finite set of real camelCase WAI-ARIA IDL property names (`ariaLabel`, `ariaChecked`,
+  // etc.), derived from lib.dom.d.ts's `ARIAMixin`
+  type AriaIDLPropertyName = {
+    [K in keyof ARIAMixin]: ARIAMixin[K] extends string | null ? K : never;
+  }[keyof ARIAMixin];
+
+  type JSXAriaProperties = { [K in AriaIDLPropertyName]?: string | boolean | undefined };
+
+  export interface DOMAttributes<T> extends JSXAttributes<T>, JSXAriaProperties {
     slot?: string;
     part?: string;
     exportparts?: string;
@@ -1722,6 +1950,12 @@ export namespace JSXBase {
     onCompositionstartCapture?: (event: CompositionEvent) => void;
     onCompositionupdate?: (event: CompositionEvent) => void;
     onCompositionupdateCapture?: (event: CompositionEvent) => void;
+
+    // Disclosure Events
+    onBeforeToggle?: (event: ToggleEvent) => void;
+    onBeforeToggleCapture?: (event: ToggleEvent) => void;
+    onToggle?: (event: ToggleEvent) => void;
+    onToggleCapture?: (event: ToggleEvent) => void;
 
     // Focus Events
     onFocus?: (event: FocusEvent) => void;
@@ -1761,7 +1995,7 @@ export namespace JSXBase {
 
     // MouseEvents
     onAuxClick?: (event: MouseEvent) => void;
-    onClick?: (event: MouseEvent) => void;
+    onClick?: (event: PointerEvent) => void;
     onClickCapture?: (event: MouseEvent) => void;
     onContextMenu?: (event: MouseEvent) => void;
     onContextMenuCapture?: (event: MouseEvent) => void;
@@ -1853,6 +2087,13 @@ export namespace JSXBase {
     onTransitionRunCapture?: (event: TransitionEvent) => void;
     onTransitionStart?: (event: TransitionEvent) => void;
     onTransitionStartCapture?: (event: TransitionEvent) => void;
+
+    // WAI-ARIA Attributes
+    // kebab-case `aria-*` attributes are a genuinely open-ended namespace (new ones can be added
+    // by the ARIA spec at any time), so this stays a catch-all pattern. The camelCase IDL
+    // properties (`ariaLabel`, etc.) are handled above via `JSXAriaProperties`, since that's a
+    // fixed, known set - see the comment there.
+    [key: `aria-${string}`]: string | boolean | undefined;
   }
 }
 
@@ -1866,6 +2107,7 @@ export interface CustomElementsDefineOptions {
   exclude?: string[];
   resourcesUrl?: string;
   syncQueue?: boolean;
+  /** @deprecated in-favour of `setTagTransformer` and `transformTag` */
   transformTagName?: (tagName: string) => string;
   jmp?: (c: Function) => any;
   raf?: (c: FrameRequestCallback) => number;

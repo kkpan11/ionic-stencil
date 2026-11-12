@@ -2,6 +2,7 @@ import { generatePreamble, hasError, normalizeFsPath } from '@utils';
 import type { Plugin, PluginContext, TransformResult } from 'rollup';
 
 import type * as d from '../../declarations';
+import type { BundlePlatform } from './bundle-interface';
 import { optimizeModule } from '../optimize/optimize-module';
 import { bundleOutput } from './bundle-output';
 import { STENCIL_INTERNAL_ID } from './entry-alias-ids';
@@ -10,7 +11,7 @@ export const workerPlugin = (
   config: d.ValidatedConfig,
   compilerCtx: d.CompilerCtx,
   buildCtx: d.BuildCtx,
-  platform: string,
+  platform: BundlePlatform,
   inlineWorkers: boolean,
 ): Plugin => {
   if (platform === 'worker' || platform === 'hydrate') {
@@ -18,7 +19,10 @@ export const workerPlugin = (
       name: 'workerPlugin',
       transform(_, id) {
         if (id.endsWith('?worker') || id.endsWith('?worker-inline')) {
-          return getMockedWorkerMain();
+          return {
+            code: getMockedWorkerMain(),
+            map: { mappings: '' },
+          };
         }
         return null;
       },
@@ -76,6 +80,7 @@ export const workerPlugin = (
         dependencies.forEach((id) => this.addWatchFile(id));
         return {
           code: getWorkerMain(referenceId, workerName, workerMsgId),
+          map: { mappings: '' },
           moduleSideEffects: false,
         };
       } else if (id.endsWith('?worker-inline')) {
@@ -97,6 +102,7 @@ export const workerPlugin = (
         dependencies.forEach((id) => this.addWatchFile(id));
         return {
           code: getInlineWorker(referenceId, workerName, workerMsgId),
+          map: { mappings: '' },
           moduleSideEffects: false,
         };
       }
@@ -109,11 +115,13 @@ export const workerPlugin = (
           if (inlineWorkers) {
             return {
               code: getInlineWorkerProxy(workerEntryPath, worker.workerMsgId, worker.exports),
+              map: { mappings: '' },
               moduleSideEffects: false,
             };
           } else {
             return {
               code: getWorkerProxy(workerEntryPath, worker.exports),
+              map: { mappings: '' },
               moduleSideEffects: false,
             };
           }
@@ -186,7 +194,6 @@ const buildWorker = async (
       footer: '})();',
       intro: getWorkerIntro(workerMsgId, config.devMode),
       esModule: false,
-      preferConst: true,
       externalLiveBindings: false,
     });
     const entryPoint = output.output[0];
@@ -405,7 +412,7 @@ const getWorkerMain = (referenceId: string, workerName: string, workerMsgId: str
 import { createWorker } from '${WORKER_HELPER_ID}';
 export const workerName = '${workerName}';
 export const workerMsgId = '${workerMsgId}';
-export const workerPath = /*@__PURE__*/import.meta.ROLLUP_FILE_URL_${referenceId};
+export const workerPath = import.meta.ROLLUP_FILE_URL_${referenceId};
 export const worker = /*@__PURE__*/createWorker(workerPath, workerName, workerMsgId);
 `;
 };
@@ -415,11 +422,18 @@ const getInlineWorker = (referenceId: string, workerName: string, workerMsgId: s
 import { createWorker } from '${WORKER_HELPER_ID}';
 export const workerName = '${workerName}';
 export const workerMsgId = '${workerMsgId}';
-export const workerPath = /*@__PURE__*/import.meta.ROLLUP_FILE_URL_${referenceId};
-const blob = new Blob(['importScripts("' + workerPath + '")'], { type: 'text/javascript' });
-const url = URL.createObjectURL(blob);
-export const worker = /*@__PURE__*/createWorker(url, workerName, workerMsgId);
-URL.revokeObjectURL(url);
+export const workerPath = import.meta.ROLLUP_FILE_URL_${referenceId};
+export let worker;
+try {
+  // first try directly starting the worker with the URL
+  worker = /*@__PURE__*/createWorker(workerPath, workerName, workerMsgId);
+} catch(e) {
+  // probably a cross-origin issue, try using a Blob instead
+  const blob = new Blob(['importScripts("' + workerPath + '")'], { type: 'text/javascript' });
+  const url = URL.createObjectURL(blob);
+  worker = /*@__PURE__*/createWorker(url, workerName, workerMsgId);
+  URL.revokeObjectURL(url);
+}
 `;
 };
 

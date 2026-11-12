@@ -13,6 +13,7 @@ export const BOOLEAN_CLI_FLAGS = [
   'dev',
   'devtools',
   'docs',
+  // @deprecated - integrated testing will be removed in Stencil v5. See https://github.com/stenciljs/core/issues/6584.
   'e2e',
   'es5',
   'esm',
@@ -24,17 +25,21 @@ export const BOOLEAN_CLI_FLAGS = [
   'prod',
   'profile',
   'serviceWorker',
+  // @deprecated - screenshot testing will be removed in Stencil v5. See https://github.com/stenciljs/core/issues/6584.
   'screenshot',
   'serve',
   'skipNodeCheck',
+  // @deprecated - integrated testing will be removed in Stencil v5. See https://github.com/stenciljs/core/issues/6584.
   'spec',
   'ssr',
-  'stats',
+  // @deprecated - screenshot testing will be removed in Stencil v5. See https://github.com/stenciljs/core/issues/6584.
   'updateScreenshot',
   'verbose',
   'version',
   'watch',
 
+  // @deprecated - all JEST CLI options below are only used by integrated testing, which will be removed in Stencil v5.
+  // See https://github.com/stenciljs/core/issues/6584.
   // JEST CLI OPTIONS
   'all',
   'automock',
@@ -89,6 +94,8 @@ export const BOOLEAN_CLI_FLAGS = [
  */
 export const NUMBER_CLI_FLAGS = [
   'port',
+  // @deprecated - all JEST CLI args below are only used by integrated testing, which will be removed in Stencil v5.
+  // See https://github.com/stenciljs/core/issues/6584.
   // JEST CLI ARGS
   'maxConcurrency',
   'testTimeout',
@@ -104,8 +111,11 @@ export const STRING_CLI_FLAGS = [
   'docsJson',
   'emulate',
   'root',
+  // @deprecated - screenshot testing will be removed in Stencil v5. See https://github.com/stenciljs/core/issues/6584.
   'screenshotConnector',
 
+  // @deprecated - all JEST CLI args below are only used by integrated testing, which will be removed in Stencil v5.
+  // See https://github.com/stenciljs/core/issues/6584.
   // JEST CLI ARGS
   'cacheDirectory',
   'changedSince',
@@ -139,6 +149,8 @@ export const STRING_CLI_FLAGS = [
   'transform',
 ] as const;
 
+// @deprecated - all entries below are JEST CLI args only used by integrated testing, which will be removed in Stencil v5.
+// See https://github.com/stenciljs/core/issues/6584.
 export const STRING_ARRAY_CLI_FLAGS = [
   'collectCoverageOnlyFrom',
   'coveragePathIgnorePatterns',
@@ -177,13 +189,16 @@ export const STRING_NUMBER_CLI_FLAGS = ['maxWorkers'] as const;
 export const BOOLEAN_STRING_CLI_FLAGS = [
   /**
    * `headless` is an argument passed through to Puppeteer (which is passed to Chrome) for end-to-end testing.
-   * Prior to Chrome v112, `headless` was treated like a boolean flag. Starting with Chrome v112, 'new' is an accepted
-   * option to support Chrome's new headless mode. In order to support this option in Stencil, both the boolean and
-   * string versions of the flag must be accepted.
    *
-   * {@see https://developer.chrome.com/articles/new-headless/}
+   * {@see https://developer.chrome.com/blog/chrome-headless-shell/}
    */
   'headless',
+  /**
+   * `stats` is an argument that can optionally accept a file path where stats should be written.
+   * When used as a boolean (--stats), it defaults to 'stencil-stats.json'.
+   * When used with a path (--stats dist/stats.json), it writes to that path.
+   */
+  'stats',
 ] as const;
 
 /**

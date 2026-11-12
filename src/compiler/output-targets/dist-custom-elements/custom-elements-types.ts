@@ -52,6 +52,13 @@ const generateCustomElementsTypesOutput = async (
 
   const components = buildCtx.components.filter((m) => !m.isCollectionDependency);
 
+  const componentsDtsRelPath = relDts(outputTarget.dir!, join(typesDir, 'components.d.ts'));
+
+  // Check for user's index.ts to augment it with Stencil types
+  const usersIndexJsPath = join(config.srcDir, 'index.ts');
+  const hasUserIndex = await compilerCtx.fs.access(usersIndexJsPath);
+  const userIndexRelPath = hasUserIndex ? normalizePath(dirname(componentsDtsRelPath)) : null;
+
   const code = [
     // To mirror the index.js file and only export the typedefs for the
     // entities exported there, we will re-export the typedefs iff
@@ -126,6 +133,8 @@ const generateCustomElementsTypesOutput = async (
     `  rel?: (el: EventTarget, eventName: string, listener: EventListenerOrEventListenerObject, options: boolean | AddEventListenerOptions) => void;`,
     `}`,
     `export declare const setPlatformOptions: (opts: SetPlatformOptions) => void;`,
+    // Always export user's index.ts types if it exists (matching JS behavior)
+    ...(userIndexRelPath ? [``, `export * from '${userIndexRelPath}';`] : []),
     ...(isBundleExport
       ? [
           ``,
@@ -144,24 +153,9 @@ const generateCustomElementsTypesOutput = async (
       : []),
   ];
 
-  const componentsDtsRelPath = relDts(outputTarget.dir!, join(typesDir, 'components.d.ts'));
-
-  // To mirror the index.js file and only export the typedefs for the
-  // entities exported there, we will re-export the typedefs iff
-  // the `customElementsExportBehavior` is set to barrel component exports
-  if (isBarrelExport) {
-    // If there is an `index.ts` file in the src directory, we'll re-export anything
-    // exported from that file
-    // Otherwise, we'll export everything from the auto-generated `components.d.ts`
-    // file in the output directory
-    const usersIndexJsPath = join(config.srcDir, 'index.ts');
-    const hasUserIndex = await compilerCtx.fs.access(usersIndexJsPath);
-    if (hasUserIndex) {
-      const userIndexRelPath = normalizePath(dirname(componentsDtsRelPath));
-      code.push(`export * from '${userIndexRelPath}';`);
-    } else {
-      code.push(`export * from '${componentsDtsRelPath}';`);
-    }
+  // Export from components.d.ts for barrel exports if user doesn't have an index.ts
+  if (isBarrelExport && !userIndexRelPath) {
+    code.push(`export * from '${componentsDtsRelPath}';`);
   }
 
   await compilerCtx.fs.writeFile(customElementsDtsPath, code.join('\n') + `\n`, {
@@ -176,6 +170,37 @@ const generateCustomElementsTypesOutput = async (
       await compilerCtx.fs.writeFile(filePath, dtsCode, { outputTargetType: outputTarget.type });
     }),
   );
+
+  // Generate loader.d.ts if autoLoader is enabled
+  if (outputTarget.autoLoader) {
+    const loaderFileName =
+      typeof outputTarget.autoLoader === 'object' ? outputTarget.autoLoader.fileName || 'loader' : 'loader';
+    const loaderDtsPath = join(outputTarget.dir!, `${loaderFileName}.d.ts`);
+    const loaderDtsCode = generateLoaderType();
+    await compilerCtx.fs.writeFile(loaderDtsPath, loaderDtsCode, { outputTargetType: outputTarget.type });
+  }
+};
+
+/**
+ * Generate a type declaration file for the auto-loader module
+ * @returns the contents of the type declaration file for the loader
+ */
+const generateLoaderType = (): string => {
+  return [
+    `/**`,
+    ` * Start the auto-loader, scanning the DOM and watching for changes.`,
+    ` * The loader uses MutationObserver to detect when custom elements are added`,
+    ` * to the DOM and lazily loads their definitions.`,
+    ` * @param root - The root element to observe (default: document.body)`,
+    ` */`,
+    `export declare function start(root?: Element): void;`,
+    ``,
+    `/**`,
+    ` * Stop the auto-loader and disconnect the MutationObserver.`,
+    ` */`,
+    `export declare function stop(): void;`,
+    ``,
+  ].join('\n');
 };
 
 /**

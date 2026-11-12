@@ -5,6 +5,7 @@ import type { Config } from '../../internal/index.js';
 export const config: Config = {
   namespace: 'TestApp',
   tsconfig: 'tsconfig-stencil.json',
+  excludeComponents: ['excluded-component', 'exclude-*', 'auto-loader*'],
   outputTargets: [
     {
       type: 'dist',
@@ -12,9 +13,21 @@ export const config: Config = {
     {
       type: 'dist-custom-elements',
       dir: 'test-components',
+      customElementsExportBehavior: 'bundle',
+      isPrimaryPackageOutputTarget: true,
+      externalRuntime: false,
+    },
+    {
+      type: 'dist-hydrate-script',
+      dir: 'hydrate',
     },
   ],
-  plugins: [sass()],
+  plugins: [
+    sass({
+      quietDeps: true,
+      silenceDeprecations: ['import'],
+    }),
+  ],
   buildDist: true,
   globalStyle: './style-plugin/global-sass-entry.scss',
   globalScript: './global.ts',
@@ -23,5 +36,6 @@ export const config: Config = {
     scriptDataOpts: true,
     experimentalSlotFixes: true,
     experimentalScopedSlotChanges: true,
+    additionalTagTransformers: true,
   },
 };

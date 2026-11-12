@@ -21,7 +21,6 @@ export const generateLazyModules = async (
   results: d.RollupResult[],
   sourceTarget: d.SourceTarget,
   isBrowserBuild: boolean,
-  sufix: string,
 ): Promise<d.BundleModule[]> => {
   if (!Array.isArray(destinations) || destinations.length === 0) {
     return [];
@@ -43,7 +42,6 @@ export const generateLazyModules = async (
         sourceTarget,
         shouldMinify,
         isBrowserBuild,
-        sufix,
       );
     }),
   );
@@ -88,18 +86,36 @@ export const generateLazyModules = async (
   );
 
   await Promise.all(
-    results
-      .filter((r): r is d.RollupAssetResult => r.type === 'asset')
-      .map((r: d.RollupAssetResult) => {
-        return Promise.all(
-          destinations.map((dest) => {
-            return compilerCtx.fs.writeFile(join(dest, r.fileName), r.content);
-          }),
-        );
-      }),
+    getAssetsToWrite(results).map((r: d.RollupAssetResult) => {
+      return Promise.all(
+        destinations.map((dest) => {
+          return compilerCtx.fs.writeFile(join(dest, r.fileName), r.content);
+        }),
+      );
+    }),
   );
 
   return bundleModules;
+};
+
+/**
+ * Get the Rollup assets that should be written as-is to the output directories.
+ *
+ * Rollup emits each chunk's source map as a separate `<chunk>.map` asset. Those maps describe the
+ * chunk before Stencil optimizes and minifies it, and Stencil already writes the correct map for each
+ * chunk alongside the transformed code. Writing the Rollup asset as well would overwrite that map
+ * (assets are written after chunks), leaving minified chunks with source maps for unminified code.
+ *
+ * @param results the Rollup results for an output target
+ * @returns the asset results, excluding source maps for chunks that Stencil writes itself
+ */
+export const getAssetsToWrite = (results: d.RollupResult[]): d.RollupAssetResult[] => {
+  const chunkSourceMapFileNames = new Set(
+    results.filter((r): r is d.RollupChunkResult => r.type === 'chunk').map((r) => `${r.fileName}.map`),
+  );
+  return results.filter(
+    (r): r is d.RollupAssetResult => r.type === 'asset' && !chunkSourceMapFileNames.has(r.fileName),
+  );
 };
 
 /**
@@ -190,10 +206,8 @@ const generateLazyEntryModule = async (
   sourceTarget: d.SourceTarget,
   shouldMinify: boolean,
   isBrowserBuild: boolean,
-  sufix: string,
 ): Promise<d.BundleModule> => {
   const entryModule = buildCtx.entryModules.find((entryModule) => entryModule.entryKey === rollupResult.entryKey);
-  const shouldHash = config.hashFileNames && isBrowserBuild;
 
   const { code, sourceMap } = await convertChunk(
     config,
@@ -207,17 +221,7 @@ const generateLazyEntryModule = async (
     rollupResult.map,
   );
 
-  const output = await writeLazyModule(
-    config,
-    compilerCtx,
-    outputTargetType,
-    destinations,
-    entryModule,
-    shouldHash,
-    code,
-    sourceMap,
-    sufix,
-  );
+  const output = await writeLazyModule(compilerCtx, outputTargetType, destinations, code, sourceMap, rollupResult);
 
   return {
     rollupResult,
@@ -254,11 +258,13 @@ const writeLazyChunk = async (
     destinations.map((dst) => {
       const filePath = join(dst, rollupResult.fileName);
       let fileCode = code;
-      if (rollupResult.map) {
+      const writes: Promise<any>[] = [];
+      if (sourceMap) {
         fileCode = code + getSourceMappingUrlForEndOfFile(rollupResult.fileName);
-        compilerCtx.fs.writeFile(filePath + '.map', JSON.stringify(sourceMap), { outputTargetType });
+        writes.push(compilerCtx.fs.writeFile(filePath + '.map', JSON.stringify(sourceMap), { outputTargetType }));
       }
-      compilerCtx.fs.writeFile(filePath, fileCode, { outputTargetType });
+      writes.push(compilerCtx.fs.writeFile(filePath, fileCode, { outputTargetType }));
+      return Promise.all(writes);
     }),
   );
 };
@@ -295,11 +301,13 @@ const writeLazyEntry = async (
     destinations.map((dst) => {
       const filePath = join(dst, rollupResult.fileName);
       let fileCode = code;
+      const writes: Promise<any>[] = [];
       if (sourceMap) {
         fileCode = code + getSourceMappingUrlForEndOfFile(rollupResult.fileName);
-        compilerCtx.fs.writeFile(filePath + '.map', JSON.stringify(sourceMap), { outputTargetType });
+        writes.push(compilerCtx.fs.writeFile(filePath + '.map', JSON.stringify(sourceMap), { outputTargetType }));
       }
-      return compilerCtx.fs.writeFile(filePath, fileCode, { outputTargetType });
+      writes.push(compilerCtx.fs.writeFile(filePath, fileCode, { outputTargetType }));
+      return Promise.all(writes);
     }),
   );
 };

@@ -1,5 +1,5 @@
 import type * as d from '../declarations';
-import { dashToPascalCase, isString, toDashCase } from './helpers';
+import { dashToPascalCase, escapeWithPattern, isString, toDashCase } from './helpers';
 import { buildError } from './message-utils';
 
 /**
@@ -7,6 +7,8 @@ import { buildError } from './message-utils';
  * included in output typedefs.
  */
 const SUPPRESSED_JSDOC_TAGS: ReadonlyArray<string> = ['virtualProp', 'slot', 'part', 'internal'];
+
+const LINE_BREAK_REGEX: Readonly<RegExp> = /\r?\n|\r/g;
 
 /**
  * Create a stylistically-appropriate JS variable name from a filename
@@ -42,18 +44,53 @@ export const createJsVarName = (fileName: string): string => {
 };
 
 /**
- * Determines if a given file path points to a type declaration file (ending in .d.ts) or not. This function is
- * case-insensitive in its heuristics.
- * @param filePath the path to check
- * @returns `true` if the given `filePath` points to a type declaration file, `false` otherwise
+ * Create a function that lowercases the first string parameter before passing it to the provided function
+ * @param fn the function to pass the lowercased path to
+ * @returns the result of the provided function
  */
-export const isDtsFile = (filePath: string): boolean => {
-  const parts = filePath.toLowerCase().split('.');
-  if (parts.length > 2) {
-    return parts[parts.length - 2] === 'd' && parts[parts.length - 1] === 'ts';
-  }
-  return false;
-};
+const lowerPathParam = (fn: (p: string) => boolean) => (p: string) => fn(p.toLowerCase());
+
+/**
+ * Determine if a stringified file path is a TypeScript declaration file based on the extension at the end of the path.
+ * @param p the path to evaluate
+ * @returns `true` if the path ends in `.d.ts` (case-sensitive), `false` otherwise.
+ */
+export const isDtsFile = lowerPathParam((p) => p.endsWith('.d.ts') || p.endsWith('.d.mts') || p.endsWith('.d.cts'));
+
+/**
+ * Determine if a stringified file path is a TypeScript file based on the extension at the end of the path. This
+ * function does _not_ consider type declaration files (`.d.ts` files) to be TypeScript files.
+ * @param p the path to evaluate
+ * @returns `true` if the path ends in `.ts` (case-sensitive) but does _not_ end in `.d.ts`, `false` otherwise.
+ */
+export const isTsFile = lowerPathParam(
+  (p: string) => !isDtsFile(p) && (p.endsWith('.ts') || p.endsWith('.mts') || p.endsWith('.cts')),
+);
+
+/**
+ * Determine if a stringified file path is a TSX file based on the extension at the end of the path
+ * @param p the path to evaluate
+ * @returns `true` if the path ends in `.tsx` (case-sensitive), `false` otherwise.
+ */
+export const isTsxFile = lowerPathParam(
+  (p: string) => p.endsWith('.tsx') || p.endsWith('.mtsx') || p.endsWith('.ctsx'),
+);
+
+/**
+ * Determine if a stringified file path is a JSX file based on the extension at the end of the path
+ * @param p the path to evaluate
+ * @returns `true` if the path ends in `.jsx` (case-sensitive), `false` otherwise.
+ */
+export const isJsxFile = lowerPathParam(
+  (p: string) => p.endsWith('.jsx') || p.endsWith('.mjsx') || p.endsWith('.cjsx'),
+);
+
+/**
+ * Determine if a stringified file path is a JavaScript file based on the extension at the end of the path
+ * @param p the path to evaluate
+ * @returns `true` if the path ends in `.js` (case-sensitive), `false` otherwise.
+ */
+export const isJsFile = lowerPathParam((p: string) => p.endsWith('.js') || p.endsWith('.mjs') || p.endsWith('.cjs'));
 
 /**
  * Generate the preamble to be placed atop the main file of the build
@@ -76,16 +113,21 @@ export const generatePreamble = (config: d.ValidatedConfig): string => {
   return preambleComment.join('\n');
 };
 
-const lineBreakRegex = /\r?\n|\r/g;
 export function getTextDocs(docs: d.CompilerJsDoc | undefined | null) {
   if (docs == null) {
     return '';
   }
-  return `${docs.text.replace(lineBreakRegex, ' ')}
-${docs.tags
-  .filter((tag) => tag.name !== 'internal')
-  .map((tag) => `@${tag.name} ${(tag.text || '').replace(lineBreakRegex, ' ')}`)
-  .join('\n')}`.trim();
+
+  const mainText = escapeWithPattern(docs.text.replace(LINE_BREAK_REGEX, ' '), /\*\//, '*\\/', true);
+
+  const tags = docs.tags
+    .filter((tag) => tag.name !== 'internal')
+    .map((tag) => {
+      const tagText = escapeWithPattern((tag.text || '').replace(LINE_BREAK_REGEX, ' '), /\*\//, '*\\/', true);
+      return `@${tag.name} ${tagText}`;
+    });
+
+  return [mainText, ...tags].join('\n').trim();
 }
 
 /**
@@ -128,10 +170,10 @@ function formatDocBlock(docs: d.CompilerJsDoc, indentation: number = 0): string 
  */
 function getDocBlockLines(docs: d.CompilerJsDoc): string[] {
   return [
-    ...docs.text.split(lineBreakRegex),
+    ...docs.text.split(LINE_BREAK_REGEX),
     ...docs.tags
       .filter((tag) => !SUPPRESSED_JSDOC_TAGS.includes(tag.name))
-      .map((tag) => `@${tag.name} ${tag.text || ''}`.split(lineBreakRegex)),
+      .map((tag) => `@${tag.name} ${tag.text || ''}`.split(LINE_BREAK_REGEX)),
   ]
     .flat()
     .filter(Boolean);

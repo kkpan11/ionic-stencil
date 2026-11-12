@@ -18,6 +18,23 @@ export class AttributeComplex {
   @Prop() str1?: string;
   @Prop() str2?: SomeTypes.String;
 
+  private _obj = { name: 'James bond' };
+  @Prop()
+  get obj() {
+    return JSON.stringify(this._obj);
+  }
+  set obj(newVal: string) {
+    if (typeof newVal === 'string') {
+      this._obj = { name: newVal };
+    }
+  }
+
+  // Regression coverage for https://github.com/stenciljs/core/issues/6854 - a prop named `aria`,
+  // or any other name starting with `aria`, must still accept an object value from JSX. See
+  // test.spec.tsx.
+  @Prop() aria?: Record<string, string | boolean | undefined> | string;
+  @Prop() ariaCustomThing?: Record<string, string | boolean | undefined> | string;
+
   @Method()
   async getInstance() {
     return this;

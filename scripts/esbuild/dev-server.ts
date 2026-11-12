@@ -6,12 +6,11 @@ import { replace } from 'esbuild-plugin-replace';
 import fs from 'fs-extra';
 import ts from 'typescript';
 
-import { createContentTypeData } from '../bundles/plugins/content-types-plugin';
-import { bundleExternal, sysNodeBundleCacheDir } from '../bundles/sys-node';
 import { getBanner } from '../utils/banner';
 import { type BuildOptions, createReplaceData } from '../utils/options';
 import { writePkgJson } from '../utils/write-pkg-json';
-import { externalAlias, getBaseEsbuildOptions, getEsbuildAliases, getFirstOutputFile, runBuilds } from './util';
+import { externalAlias, getBaseEsbuildOptions, getEsbuildAliases, getFirstOutputFile, runBuilds } from './utils';
+import { createContentTypeData } from './utils/content-types';
 
 const CONNECTOR_NAME = 'connector.html';
 
@@ -64,21 +63,12 @@ export async function buildDevServer(opts: BuildOptions) {
   const xdgOpenDestPath = join(opts.output.devServerDir, 'xdg-open');
   await fs.copy(xdgOpenSrcPath, xdgOpenDestPath);
 
-  const cachedDir = join(opts.scriptsBuildDir, sysNodeBundleCacheDir);
-  await Promise.all([
-    bundleExternal(opts, opts.output.devServerDir, cachedDir, 'ws.js'),
-    bundleExternal(opts, opts.output.devServerDir, cachedDir, 'open-in-editor-api.js'),
-  ]);
-
-  const external = [
-    ...builtinModules,
-    // ws.js is externally bundled
-    './ws.js',
-    // open-in-editor-api is externally bundled
-    './open-in-editor-api',
-  ];
-
-  const devServerAliases = getEsbuildAliases();
+  const external = [...builtinModules];
+  const devServerAliases = {
+    ...getEsbuildAliases(),
+    glob: '../../sys/node/glob.js',
+    '@stencil/core/mock-doc': '../../mock-doc/index.cjs',
+  };
   const devServerIndexEsbuildOptions = {
     ...getBaseEsbuildOptions(),
     alias: devServerAliases,
@@ -98,6 +88,8 @@ export async function buildDevServer(opts: BuildOptions) {
     ...getBaseEsbuildOptions(),
     alias: {
       ...devServerAliases,
+      glob: '../../sys/node/glob.js',
+      '@stencil/core/mock-doc': '../../mock-doc/index.cjs',
       '@sys-api-node': '../sys/node/index.js',
     },
     entryPoints: [join(inputDir, 'server-process.js')],
@@ -118,7 +110,9 @@ export async function buildDevServer(opts: BuildOptions) {
   } satisfies ESBuildOptions;
 
   const connectorAlias = {
+    glob: '../../sys/node/glob.js',
     '@stencil/core/dev-server/client': join(inputDir, 'client', 'index.js'),
+    '@stencil/core/mock-doc': '../../mock-doc/index.cjs',
   };
   const connectorEsbuildOptions = {
     ...getBaseEsbuildOptions(),

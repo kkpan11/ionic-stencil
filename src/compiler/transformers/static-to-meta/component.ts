@@ -1,25 +1,29 @@
-import { join, normalizePath, relative, unique } from '@utils';
+import { augmentDiagnosticWithNode, buildWarn, join, normalizePath, relative, unique } from '@utils';
 import { dirname, isAbsolute } from 'path';
 import ts from 'typescript';
 
 import type * as d from '../../../declarations';
 import { addComponentMetaStatic } from '../add-component-meta-static';
 import { setComponentBuildConditionals } from '../component-build-conditionals';
+import { detectModernPropDeclarations } from '../detect-modern-prop-decls';
 import { getComponentTagName, getStaticValue, isInternal, isStaticGetter, serializeSymbol } from '../transform-utils';
-import { parseAttachInternals } from './attach-internals';
+import { parseAttachInternals, parseAttachInternalsCustomStates } from './attach-internals';
 import { parseCallExpression } from './call-expression';
 import { parseClassMethods } from './class-methods';
 import { parseStaticElementRef } from './element-ref';
-import { parseStaticEncapsulation, parseStaticShadowDelegatesFocus } from './encapsulation';
-import { parseStaticEvents } from './events';
+import { parseStaticEncapsulation, parseStaticShadowDelegatesFocus, parseStaticSlotAssignment } from './encapsulation';
 import { parseFormAssociated } from './form-associated';
-import { parseStaticListeners } from './listeners';
-import { parseStaticMethods } from './methods';
-import { parseStaticProps } from './props';
-import { parseStaticStates } from './states';
 import { parseStringLiteral } from './string-literal';
 import { parseStaticStyles } from './styles';
-import { parseStaticWatchers } from './watchers';
+import { mergeExtendedClassMeta } from './class-extension';
+
+const BLACKLISTED_COMPONENT_METHODS = [
+  /**
+   * If someone would define a getter called "shadowRoot" on a component
+   * this would cause issues when Stencil tries to hydrate the component.
+   */
+  'shadowRoot',
+];
 
 /**
  * Given a {@see ts.ClassDeclaration} which represents a Stencil component
@@ -38,6 +42,7 @@ import { parseStaticWatchers } from './watchers';
  * @param typeChecker a TypeScript type checker instance
  * @param cmpNode the TypeScript class declaration for the component
  * @param moduleFile Stencil's IR for a module, used here as an out param
+ * @param buildCtx the current build context, used to surface diagnostics
  * @param transformOpts options which control various aspects of the
  * transformation
  * @returns the TypeScript class declaration IR instance with which the
@@ -48,6 +53,7 @@ export const parseStaticComponentMeta = (
   typeChecker: ts.TypeChecker,
   cmpNode: ts.ClassDeclaration,
   moduleFile: d.Module,
+  buildCtx: d.BuildCtx,
   transformOpts?: d.TransformOptions,
 ): ts.ClassDeclaration => {
   if (cmpNode.members == null) {
@@ -59,12 +65,25 @@ export const parseStaticComponentMeta = (
     return cmpNode;
   }
 
+  const {
+    doesExtend,
+    properties,
+    states,
+    methods,
+    listeners,
+    events,
+    watchers,
+    classMethods,
+    serializers,
+    deserializers,
+  } = mergeExtendedClassMeta(compilerCtx, typeChecker, buildCtx, cmpNode, staticMembers, moduleFile);
   const symbol = typeChecker ? typeChecker.getSymbolAtLocation(cmpNode.name) : undefined;
   const docs = serializeSymbol(typeChecker, symbol);
   const isCollectionDependency = moduleFile.isCollectionDependency;
   const encapsulation = parseStaticEncapsulation(staticMembers);
   const cmp: d.ComponentCompilerMeta = {
     attachInternalsMemberName: parseAttachInternals(staticMembers),
+    attachInternalsCustomStates: parseAttachInternalsCustomStates(staticMembers),
     formAssociated: parseFormAssociated(staticMembers),
     tagName: tagName,
     excludeFromCollection: moduleFile.excludeFromCollection,
@@ -73,13 +92,15 @@ export const parseStaticComponentMeta = (
     elementRef: parseStaticElementRef(staticMembers),
     encapsulation,
     shadowDelegatesFocus: !!parseStaticShadowDelegatesFocus(encapsulation, staticMembers),
-    properties: parseStaticProps(staticMembers),
+    slotAssignment: parseStaticSlotAssignment(encapsulation, staticMembers),
+    properties,
     virtualProperties: parseVirtualProps(docs),
-    states: parseStaticStates(staticMembers),
-    methods: parseStaticMethods(staticMembers),
-    listeners: parseStaticListeners(staticMembers),
-    events: parseStaticEvents(staticMembers),
-    watchers: parseStaticWatchers(staticMembers),
+    states,
+    methods,
+    listeners,
+    events,
+    watchers,
+    doesExtend,
     styles: parseStaticStyles(compilerCtx, tagName, moduleFile.sourceFilePath, isCollectionDependency, staticMembers),
     internal: isInternal(docs),
     assetsDirs: parseAssetsDirs(staticMembers, moduleFile.jsFilePath),
@@ -88,6 +109,8 @@ export const parseStaticComponentMeta = (
     jsFilePath: moduleFile.jsFilePath,
     sourceFilePath: moduleFile.sourceFilePath,
     sourceMapPath: moduleFile.sourceMapPath,
+    serializers,
+    deserializers,
 
     hasAttributeChangedCallbackFn: false,
     hasComponentWillLoadFn: false,
@@ -97,8 +120,8 @@ export const parseStaticComponentMeta = (
     hasComponentDidUpdateFn: false,
     hasComponentWillRenderFn: false,
     hasComponentDidRenderFn: false,
-    hasComponentDidUnloadFn: false,
     hasConnectedCallbackFn: false,
+    hasDeserializer: false,
     hasDisconnectedCallbackFn: false,
     hasElement: false,
     hasEvent: false,
@@ -112,6 +135,7 @@ export const parseStaticComponentMeta = (
     hasMember: false,
     hasMethod: false,
     hasMode: false,
+    hasModernPropertyDecls: false,
     hasAttribute: false,
     hasProp: false,
     hasPropNumber: false,
@@ -120,6 +144,8 @@ export const parseStaticComponentMeta = (
     hasPropMutable: false,
     hasReflect: false,
     hasRenderFn: false,
+    hasSerializer: false,
+    hasSlot: false,
     hasState: false,
     hasStyle: false,
     hasVdomAttribute: false,
@@ -138,6 +164,7 @@ export const parseStaticComponentMeta = (
     htmlAttrNames: [],
     htmlTagNames: [],
     htmlParts: [],
+    htmlSlots: [],
     isUpdateable: false,
     potentialCmpRefs: [],
 
@@ -147,19 +174,24 @@ export const parseStaticComponentMeta = (
     directDependencies: [],
   };
 
-  const visitComponentChildNode = (node: ts.Node) => {
+  const visitComponentChildNode = (node: ts.Node, buildCtx: d.BuildCtx) => {
+    validateComponentMembers(node, buildCtx);
+
     if (ts.isCallExpression(node)) {
-      parseCallExpression(cmp, node);
+      parseCallExpression(cmp, node, typeChecker);
     } else if (ts.isStringLiteral(node)) {
       parseStringLiteral(cmp, node);
     }
-    node.forEachChild(visitComponentChildNode);
+    node.forEachChild((child) => visitComponentChildNode(child, buildCtx));
   };
-  visitComponentChildNode(cmpNode);
-  parseClassMethods(cmpNode, cmp);
+  visitComponentChildNode(cmpNode, buildCtx);
+  parseClassMethods(classMethods, cmp);
 
+  cmp.hasModernPropertyDecls = detectModernPropDeclarations(cmpNode) || doesExtend;
   cmp.htmlAttrNames = unique(cmp.htmlAttrNames);
   cmp.htmlTagNames = unique(cmp.htmlTagNames);
+  cmp.htmlSlots = unique(cmp.htmlSlots);
+  cmp.hasSlot = cmp.hasSlot || cmp.htmlTagNames.includes('slot');
   cmp.potentialCmpRefs = unique(cmp.potentialCmpRefs);
   setComponentBuildConditionals(cmp);
 
@@ -168,12 +200,55 @@ export const parseStaticComponentMeta = (
   }
 
   // add to module map
-  moduleFile.cmps.push(cmp);
+  const foundIndex = moduleFile.cmps.findIndex(
+    (c) => c.tagName === cmp.tagName && c.sourceFilePath === cmp.sourceFilePath,
+  );
+  if (foundIndex > -1) moduleFile.cmps[foundIndex] = cmp;
+  else moduleFile.cmps.push(cmp);
 
   // add to node map
   compilerCtx.nodeMap.set(cmpNode, cmp);
 
   return cmpNode;
+};
+
+const validateComponentMembers = (node: ts.Node, buildCtx: d.BuildCtx) => {
+  /**
+   * validate if:
+   */
+  if (
+    /**
+     * the component has a getter called "shadowRoot"
+     */
+    ts.isGetAccessorDeclaration(node) &&
+    ts.isIdentifier(node.name) &&
+    typeof node.name.escapedText === 'string' &&
+    BLACKLISTED_COMPONENT_METHODS.includes(node.name.escapedText) &&
+    /**
+     * the parent node is a class declaration
+     */
+    node.parent &&
+    ts.isClassDeclaration(node.parent)
+  ) {
+    const propName = node.name.escapedText;
+    const decorator = ts.getDecorators(node.parent)[0];
+    /**
+     * the class is actually a Stencil component, has a decorator with a property named "tag"
+     */
+    if (
+      ts.isCallExpression(decorator.expression) &&
+      decorator.expression.arguments.length === 1 &&
+      ts.isObjectLiteralExpression(decorator.expression.arguments[0]) &&
+      decorator.expression.arguments[0].properties.some(
+        (prop) => ts.isPropertyAssignment(prop) && prop.name.getText() === 'tag',
+      )
+    ) {
+      const componentName = node.parent.name.getText();
+      const err = buildWarn(buildCtx.diagnostics);
+      err.messageText = `The component "${componentName}" has a getter called "${propName}". This getter is reserved for use by Stencil components and should not be defined by the user.`;
+      augmentDiagnosticWithNode(err, node);
+    }
+  }
 };
 
 const parseVirtualProps = (docs: d.CompilerJsDoc) => {

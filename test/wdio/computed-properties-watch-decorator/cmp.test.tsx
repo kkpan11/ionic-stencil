@@ -1,9 +1,11 @@
 import { Fragment, h } from '@stencil/core';
 import { render } from '@wdio/browser-runner/stencil';
+import { $, expect } from '@wdio/globals';
 
 describe('computed-properties-watch-decorator', () => {
   beforeEach(async () => {
     render({
+      components: [],
       template: () => (
         <>
           <computed-properties-watch-decorator></computed-properties-watch-decorator>
@@ -19,8 +21,24 @@ describe('computed-properties-watch-decorator', () => {
   });
 
   it('triggers the watch callback when the associated prop changes', async () => {
-    const el = document.querySelector('computed-properties-watch-decorator');
-    await expect(el).toHaveText(['First name called with: not yet', 'Last name called with: not yet'].join('\n'));
+    const firstNameCalledWithImmediate = {
+      newVal: 'no',
+      attrName: 'first',
+    };
+    const lastNameCalledWithImmediate = {
+      newVal: 'content',
+      attrName: 'last',
+    };
+
+    const el = $('computed-properties-watch-decorator').$('div');
+    await expect(el).toHaveText(
+      [
+        'First name called with: not yet',
+        'Last name called with: not yet',
+        `First name called with immediate: ${JSON.stringify(firstNameCalledWithImmediate)}`,
+        `Last name called with immediate: ${JSON.stringify(lastNameCalledWithImmediate)}`,
+      ].join('\n'),
+    );
 
     const button = document.querySelector('button');
     expect(button).toBeDefined();
@@ -41,6 +59,8 @@ describe('computed-properties-watch-decorator', () => {
       [
         `First name called with: ${JSON.stringify(firstNameCalledWith)}`,
         `Last name called with: ${JSON.stringify(lastNameCalledWith)}`,
+        `First name called with immediate: ${JSON.stringify(firstNameCalledWith)}`,
+        `Last name called with immediate: ${JSON.stringify(lastNameCalledWith)}`,
       ].join('\n'),
     );
   });

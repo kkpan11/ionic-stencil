@@ -119,6 +119,14 @@ export const getTranspileConfig = (input: TranspileOptions): TranspileConfig => 
     tsCompilerOptions.paths = { ...compileOpts.paths };
   }
 
+  if (input.jsx !== undefined) {
+    tsCompilerOptions.jsx = input.jsx;
+  }
+
+  if (isString(input.jsxImportSource)) {
+    tsCompilerOptions.jsxImportSource = input.jsxImportSource;
+  }
+
   const transformOpts: TransformOptions = {
     coreImportPath: compileOpts.coreImportPath,
     componentExport: compileOpts.componentExport as any,
@@ -163,10 +171,11 @@ export const getTranspileCssConfig = (
     file: results.inputFilePath,
     input: results.code,
     tag: importData && importData.tag,
+    tags: [...(compileOpts.tagsToTransform || importData?.tag)],
+    addTagTransformers: compileOpts && compileOpts.additionalTagTransformers === true,
     encapsulation: importData && importData.encapsulation,
     mode: importData && importData.mode,
     sourceMap: compileOpts.sourceMap !== false,
-    commentOriginalSelector: false,
     minify: false,
     autoprefixer: false,
     module: compileOpts.module,

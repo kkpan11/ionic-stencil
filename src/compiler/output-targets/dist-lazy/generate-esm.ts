@@ -5,6 +5,7 @@ import type * as d from '../../../declarations';
 import type { RollupResult } from '../../../declarations';
 import { generateRollupOutput } from '../../app-core/bundle-app-core';
 import { generateLazyModules } from './generate-lazy-module';
+import { lazyBundleIdPlugin } from './lazy-bundleid-plugin';
 
 export const generateEsm = async (
   config: d.ValidatedConfig,
@@ -21,8 +22,8 @@ export const generateEsm = async (
       format: 'es',
       entryFileNames: '[name].js',
       assetFileNames: '[name]-[hash][extname]',
-      preferConst: true,
       sourcemap: config.sourceMap,
+      plugins: [lazyBundleIdPlugin(buildCtx, config, false, '')],
     };
     const outputTargetType = esmOutputs[0].type;
     const output = await generateRollupOutput(rollupBuild, esmOpts, config, buildCtx.entryModules);
@@ -40,7 +41,6 @@ export const generateEsm = async (
         output,
         'es2017',
         false,
-        '',
       );
 
       const es5destinations = esmEs5Outputs
@@ -55,10 +55,11 @@ export const generateEsm = async (
         output,
         'es5',
         false,
-        '',
       );
 
-      await copyPolyfills(config, compilerCtx, esmOutputs);
+      if (config.buildEs5) {
+        await copyPolyfills(config, compilerCtx, esmOutputs);
+      }
       await generateShortcuts(config, compilerCtx, outputTargets, output);
     }
   }
@@ -66,6 +67,15 @@ export const generateEsm = async (
   return { name: 'esm', buildCtx };
 };
 
+/**
+ * Copy polyfills from `$INSTALL_DIR/internal/client/polyfills` to the lazy
+ * loader output directory where $INSTALL_DIR is the directory in which the
+ * `@stencil/core` package is installed.
+ *
+ * @param config a validated Stencil configuration
+ * @param compilerCtx the current compiler context
+ * @param outputTargets dist-lazy output targets
+ */
 const copyPolyfills = async (
   config: d.ValidatedConfig,
   compilerCtx: d.CompilerCtx,

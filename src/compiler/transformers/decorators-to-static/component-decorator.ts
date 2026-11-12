@@ -35,7 +35,7 @@ export const componentDecoratorToStatic = (
   newMembers: ts.ClassElement[],
   componentDecorator: ts.Decorator,
 ) => {
-  const [componentOptions] = getDecoratorParameters<d.ComponentOptions>(componentDecorator, typeChecker);
+  const [componentOptions] = getDecoratorParameters<d.ComponentOptions>(componentDecorator, typeChecker, diagnostics);
   if (!componentOptions) {
     return;
   }
@@ -52,6 +52,9 @@ export const componentDecoratorToStatic = (
     if (typeof componentOptions.shadow !== 'boolean') {
       if (componentOptions.shadow.delegatesFocus === true) {
         newMembers.push(createStaticGetter('delegatesFocus', convertValueToLiteral(true)));
+      }
+      if (componentOptions.shadow.slotAssignment === 'manual') {
+        newMembers.push(createStaticGetter('slotAssignment', convertValueToLiteral('manual')));
       }
     }
   } else if (componentOptions.scoped) {
@@ -95,21 +98,21 @@ const validateComponent = (
   cmpNode: ts.ClassDeclaration,
   componentDecorator: ts.Decorator,
 ) => {
-  const extendNode =
-    cmpNode.heritageClauses && cmpNode.heritageClauses.find((c) => c.token === ts.SyntaxKind.ExtendsKeyword);
-  if (extendNode) {
-    const err = buildError(diagnostics);
-    err.messageText = `Classes decorated with @Component can not extend from a base class.
-    Stencil needs to be able to switch between different base classes in order to implement the different output targets such as: lazy and raw web components.`;
-    augmentDiagnosticWithNode(err, extendNode);
-    return false;
-  }
-
   if (componentOptions.shadow && componentOptions.scoped) {
     const err = buildError(diagnostics);
     err.messageText = `Components cannot be "scoped" and "shadow" at the same time, they are mutually exclusive configurations.`;
     augmentDiagnosticWithNode(err, findTagNode('scoped', componentDecorator));
     return false;
+  }
+
+  // Validate slotAssignment is only used with shadow: true
+  if (typeof componentOptions.shadow === 'object' && componentOptions.shadow.slotAssignment) {
+    if (componentOptions.shadow.slotAssignment !== 'manual' && componentOptions.shadow.slotAssignment !== 'named') {
+      const err = buildError(diagnostics);
+      err.messageText = `The "slotAssignment" option must be either "manual" or "named".`;
+      augmentDiagnosticWithNode(err, findTagNode('slotAssignment', componentDecorator));
+      return false;
+    }
   }
 
   const constructor = cmpNode.members.find(ts.isConstructorDeclaration);

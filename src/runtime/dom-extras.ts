@@ -1,16 +1,21 @@
 import { BUILD } from '@app-data';
-import { getHostRef, plt, supportsShadow } from '@platform';
-import { NODE_TYPES } from '@stencil/core/mock-doc';
-import { CMP_FLAGS, HOST_FLAGS } from '@utils';
+import { supportsShadow } from '@platform';
 
 import type * as d from '../declarations';
-import { PLATFORM_FLAGS } from './runtime-constants';
-import { updateFallbackSlotVisibility } from './vdom/vdom-render';
+import {
+  addSlotRelocateNode,
+  dispatchSlotChangeEvent,
+  findSlotFromSlottedNode,
+  getHostSlotNodes,
+  getSlotChildSiblings,
+  getSlotName,
+  getSlottedChildNodes,
+  updateFallbackSlotVisibility,
+} from './slot-polyfill-utils';
 
-export const patchPseudoShadowDom = (
-  hostElementPrototype: HTMLElement,
-  descriptorPrototype: d.ComponentRuntimeMeta,
-) => {
+/// HOST ELEMENTS ///
+
+export const patchPseudoShadowDom = (hostElementPrototype: HTMLElement) => {
   patchCloneNode(hostElementPrototype);
   patchSlotAppendChild(hostElementPrototype);
   patchSlotAppend(hostElementPrototype);
@@ -18,13 +23,21 @@ export const patchPseudoShadowDom = (
   patchSlotInsertAdjacentElement(hostElementPrototype);
   patchSlotInsertAdjacentHTML(hostElementPrototype);
   patchSlotInsertAdjacentText(hostElementPrototype);
+  patchInsertBefore(hostElementPrototype);
   patchTextContent(hostElementPrototype);
-  patchChildSlotNodes(hostElementPrototype, descriptorPrototype);
+  patchInnerContentSetters(hostElementPrototype);
+  patchChildSlotNodes(hostElementPrototype);
   patchSlotRemoveChild(hostElementPrototype);
 };
 
-export const patchCloneNode = (HostElementPrototype: HTMLElement) => {
-  const orgCloneNode = HostElementPrototype.cloneNode;
+/**
+ * Patches the `cloneNode` method on a `scoped` Stencil component.
+ *
+ * @param HostElementPrototype The Stencil component to be patched
+ */
+export const patchCloneNode = (HostElementPrototype: any) => {
+  if (HostElementPrototype.__cloneNode) return;
+  const orgCloneNode = (HostElementPrototype.__cloneNode = HostElementPrototype.cloneNode);
 
   HostElementPrototype.cloneNode = function (deep?: boolean) {
     const srcNode = this;
@@ -48,11 +61,13 @@ export const patchCloneNode = (HostElementPrototype: HTMLElement) => {
         's-nr',
         's-si',
         's-rf',
+        's-scs',
       ];
+      const childNodes = (this as any).__childNodes || this.childNodes;
 
-      for (; i < srcNode.childNodes.length; i++) {
-        slotted = (srcNode.childNodes[i] as any)['s-nr'];
-        nonStencilNode = stencilPrivates.every((privateField) => !(srcNode.childNodes[i] as any)[privateField]);
+      for (; i < childNodes.length; i++) {
+        slotted = (childNodes[i] as any)['s-nr'];
+        nonStencilNode = stencilPrivates.every((privateField) => !(childNodes[i] as any)[privateField]);
         if (slotted) {
           if (BUILD.appendChildSlotFix && (clonedNode as any).__appendChild) {
             (clonedNode as any).__appendChild(slotted.cloneNode(true));
@@ -61,7 +76,7 @@ export const patchCloneNode = (HostElementPrototype: HTMLElement) => {
           }
         }
         if (nonStencilNode) {
-          clonedNode.appendChild((srcNode.childNodes[i] as any).cloneNode(true));
+          clonedNode.appendChild((childNodes[i] as any).cloneNode(true));
         }
       }
     }
@@ -78,17 +93,26 @@ export const patchCloneNode = (HostElementPrototype: HTMLElement) => {
  * @param HostElementPrototype The Stencil component to be patched
  */
 export const patchSlotAppendChild = (HostElementPrototype: any) => {
+  if (HostElementPrototype.__appendChild) return;
   HostElementPrototype.__appendChild = HostElementPrototype.appendChild;
-  HostElementPrototype.appendChild = function (this: d.RenderNode, newChild: d.RenderNode) {
-    const slotName = (newChild['s-sn'] = getSlotName(newChild));
-    const slotNode = getHostSlotNode(this.childNodes, slotName, this.tagName);
-    if (slotNode) {
-      const slotChildNodes = getHostSlotChildNodes(slotNode, slotName);
-      const appendAfter = slotChildNodes[slotChildNodes.length - 1];
-      const insertedNode = appendAfter.parentNode.insertBefore(newChild, appendAfter.nextSibling);
 
-      // Check if there is fallback content that should be hidden
-      updateFallbackSlotVisibility(this);
+  HostElementPrototype.appendChild = function (this: d.RenderNode, newChild: d.RenderNode) {
+    const { slotName, slotNode } = findSlotFromSlottedNode(newChild, this);
+    if (slotNode) {
+      addSlotRelocateNode(newChild, slotNode);
+
+      const slotChildNodes = getSlotChildSiblings(slotNode, slotName);
+      const appendAfter = slotChildNodes[slotChildNodes.length - 1];
+      const slotWasEmpty = slotChildNodes.every((node) => node['s-sr']);
+
+      const parent = internalCall(appendAfter, 'parentNode') as d.RenderNode;
+      const insertedNode: d.RenderNode = internalCall(parent, 'insertBefore')(newChild, appendAfter.nextSibling);
+      dispatchSlotChangeEvent(slotNode);
+
+      // Fallback visibility only changes when a slot goes from empty to having content
+      if (slotWasEmpty) {
+        updateFallbackSlotVisibility(this);
+      }
 
       return insertedNode;
     }
@@ -104,23 +128,19 @@ export const patchSlotAppendChild = (HostElementPrototype: any) => {
  * @param ElementPrototype The Stencil component to be patched
  */
 const patchSlotRemoveChild = (ElementPrototype: any) => {
+  if (ElementPrototype.__removeChild) return;
   ElementPrototype.__removeChild = ElementPrototype.removeChild;
+
   ElementPrototype.removeChild = function (this: d.RenderNode, toRemove: d.RenderNode) {
     if (toRemove && typeof toRemove['s-sn'] !== 'undefined') {
-      const slotNode = getHostSlotNode(this.childNodes, toRemove['s-sn'], this.tagName);
-      if (slotNode) {
-        // Get all slot content
-        const slotChildNodes = getHostSlotChildNodes(slotNode, toRemove['s-sn']);
-        // See if any of the slotted content matches the node to remove
-        const existingNode = slotChildNodes.find((n) => n === toRemove);
-
-        if (existingNode) {
-          existingNode.remove();
-          // Check if there is fallback content that should be displayed if that
-          // was the last node in the slot
-          updateFallbackSlotVisibility(this);
-          return;
-        }
+      const childNodes = (this as any).__childNodes || this.childNodes;
+      const slotNode = getHostSlotNodes(childNodes, this.tagName, toRemove['s-sn'])[0];
+      if (slotNode && toRemove.isConnected) {
+        toRemove.remove();
+        // Check if there is fallback content that should be displayed if that
+        // was the last node in the slot
+        updateFallbackSlotVisibility(this);
+        return;
       }
     }
     return (this as any).__removeChild(toRemove);
@@ -133,31 +153,33 @@ const patchSlotRemoveChild = (ElementPrototype: any) => {
  * @param HostElementPrototype the `Element` to be patched
  */
 export const patchSlotPrepend = (HostElementPrototype: HTMLElement) => {
-  const originalPrepend = HostElementPrototype.prepend;
+  if ((HostElementPrototype as any).__prepend) return;
+  (HostElementPrototype as any).__prepend = HostElementPrototype.prepend;
 
   HostElementPrototype.prepend = function (this: d.HostElement, ...newChildren: (d.RenderNode | string)[]) {
     newChildren.forEach((newChild: d.RenderNode | string) => {
       if (typeof newChild === 'string') {
         newChild = this.ownerDocument.createTextNode(newChild) as unknown as d.RenderNode;
       }
-      const slotName = (newChild['s-sn'] = getSlotName(newChild));
-      const slotNode = getHostSlotNode(this.childNodes, slotName, this.tagName);
+      const slotName = (newChild['s-sn'] = getSlotName(newChild)) || '';
+      const childNodes = internalCall(this, 'childNodes');
+      const slotNode = getHostSlotNodes(childNodes, this.tagName, slotName)[0];
       if (slotNode) {
-        const slotPlaceholder: d.RenderNode = document.createTextNode('') as any;
-        slotPlaceholder['s-nr'] = newChild;
-        (slotNode['s-cr'].parentNode as any).__appendChild(slotPlaceholder);
-        newChild['s-ol'] = slotPlaceholder;
-
-        const slotChildNodes = getHostSlotChildNodes(slotNode, slotName);
+        addSlotRelocateNode(newChild, slotNode, true);
+        const slotChildNodes = getSlotChildSiblings(slotNode, slotName);
         const appendAfter = slotChildNodes[0];
-        return appendAfter.parentNode.insertBefore(newChild, appendAfter.nextSibling);
+
+        const parent = internalCall(appendAfter, 'parentNode') as d.RenderNode;
+        const toReturn = internalCall(parent, 'insertBefore')(newChild, internalCall(appendAfter, 'nextSibling'));
+        dispatchSlotChangeEvent(slotNode);
+        return toReturn;
       }
 
       if (newChild.nodeType === 1 && !!newChild.getAttribute('slot')) {
         newChild.hidden = true;
       }
 
-      return originalPrepend.call(this, newChild);
+      return (HostElementPrototype as any).__prepend(newChild);
     });
   };
 };
@@ -169,6 +191,8 @@ export const patchSlotPrepend = (HostElementPrototype: HTMLElement) => {
  * @param HostElementPrototype the `Element` to be patched
  */
 export const patchSlotAppend = (HostElementPrototype: HTMLElement) => {
+  if ((HostElementPrototype as any).__append) return;
+  (HostElementPrototype as any).__append = HostElementPrototype.append;
   HostElementPrototype.append = function (this: d.HostElement, ...newChildren: (d.RenderNode | string)[]) {
     newChildren.forEach((newChild: d.RenderNode | string) => {
       if (typeof newChild === 'string') {
@@ -187,6 +211,7 @@ export const patchSlotAppend = (HostElementPrototype: HTMLElement) => {
  * @param HostElementPrototype the `Element` to be patched
  */
 export const patchSlotInsertAdjacentHTML = (HostElementPrototype: HTMLElement) => {
+  if ((HostElementPrototype as any).__insertAdjacentHTML) return;
   const originalInsertAdjacentHtml = HostElementPrototype.insertAdjacentHTML;
 
   HostElementPrototype.insertAdjacentHTML = function (this: d.HostElement, position: InsertPosition, text: string) {
@@ -223,6 +248,76 @@ export const patchSlotInsertAdjacentText = (HostElementPrototype: HTMLElement) =
 };
 
 /**
+ * Patches the `insertBefore` of a non-shadow component.
+ *
+ * The *current* node to insert before may not be in the root of our component
+ * (e.g. if it's 'slotted' it appears in the root, but isn't really)
+ *
+ * This tries to find where the *current* node lives within the component and insert the new node before it
+ * *If* the new node is in the same slot as the *current* node. Otherwise the new node is appended to it's 'slot'
+ *
+ * @param HostElementPrototype the custom element prototype to patch
+ */
+const patchInsertBefore = (HostElementPrototype: HTMLElement) => {
+  if ((HostElementPrototype as any).__insertBefore) return;
+  const eleProto: d.RenderNode = HostElementPrototype;
+  if (eleProto.__insertBefore) return;
+
+  eleProto.__insertBefore = HostElementPrototype.insertBefore;
+
+  HostElementPrototype.insertBefore = function <T extends d.PatchedSlotNode>(
+    this: d.RenderNode,
+    newChild: T,
+    currentChild: d.RenderNode | null,
+  ) {
+    const { slotName, slotNode } = findSlotFromSlottedNode(newChild, this);
+
+    if (slotNode) {
+      if (currentChild === null) {
+        // inserting before `null` appends; the patched appendChild method will correctly slot the node
+        this.appendChild(newChild);
+        return newChild;
+      }
+
+      const slottedNodes = this.__childNodes ? this.childNodes : getSlottedChildNodes(this.childNodes);
+      // the node to insert before is one of our 'lightDOM' / slotted nodes
+      if ((slottedNodes as d.RenderNode[]).includes(currentChild)) {
+        if (slotName !== currentChild['s-sn']) {
+          // new child is not in the same slot as 'slot before' node
+          // so let's use the patched appendChild method. This will correctly slot the node
+          this.appendChild(newChild);
+        } else {
+          // current child ('slot before' node) is 'in' the same slot
+          addSlotRelocateNode(newChild, slotNode);
+
+          const parent = internalCall(currentChild, 'parentNode') as d.RenderNode;
+          internalCall(parent, 'insertBefore')(newChild, currentChild);
+
+          dispatchSlotChangeEvent(slotNode);
+        }
+        return newChild;
+      }
+    }
+
+    /**
+     * Fixes an issue where slotted elements are dynamically relocated in React, such as after data fetch.
+     *
+     * When a slotted element is passed to another scoped component (e.g., <A><C slot="header"/></A>),
+     * the child’s __parentNode (original parent node property) does not match this.
+     *
+     * To prevent errors, this checks if the current child's parent node differs from this.
+     * If so, appendChild(newChild) is called to ensure the child is correctly inserted,
+     * allowing Stencil to properly manage the slot placement.
+     */
+    const parentNode = (currentChild as d.PatchedSlotNode)?.__parentNode;
+    if (parentNode && !this.isSameNode(parentNode)) {
+      return this.appendChild(newChild);
+    }
+    return (this as d.RenderNode).__insertBefore(newChild, currentChild);
+  };
+};
+
+/**
  * Patches the `insertAdjacentElement` method for a slotted node inside a scoped component. Specifically,
  * we only need to patch the behavior for the specific `beforeend` and `afterbegin` positions so the element
  * gets inserted into the DOM in the correct location.
@@ -230,6 +325,7 @@ export const patchSlotInsertAdjacentText = (HostElementPrototype: HTMLElement) =
  * @param HostElementPrototype the `Element` to be patched
  */
 export const patchSlotInsertAdjacentElement = (HostElementPrototype: HTMLElement) => {
+  if ((HostElementPrototype as any).__insertAdjacentElement) return;
   const originalInsertAdjacentElement = HostElementPrototype.insertAdjacentElement;
 
   HostElementPrototype.insertAdjacentElement = function (
@@ -252,209 +348,311 @@ export const patchSlotInsertAdjacentElement = (HostElementPrototype: HTMLElement
 };
 
 /**
- * Patches the text content of an unnamed slotted node inside a scoped component
+ * Patches the `textContent` of an unnamed slotted node inside a scoped component
+ *
  * @param hostElementPrototype the `Element` to be patched
  */
 export const patchTextContent = (hostElementPrototype: HTMLElement): void => {
-  const descriptor = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent');
+  patchHostOriginalAccessor('textContent', hostElementPrototype);
 
-  Object.defineProperty(hostElementPrototype, '__textContent', descriptor);
-
-  if (BUILD.experimentalScopedSlotChanges) {
-    // Patch `textContent` to mimic shadow root behavior
-    Object.defineProperty(hostElementPrototype, 'textContent', {
-      // To mimic shadow root behavior, we need to return the text content of all
-      // nodes in a slot reference node
-      get(): string | null {
-        const slotRefNodes = getAllChildSlotNodes(this.childNodes);
-
-        const textContent = slotRefNodes
-          .map((node) => {
-            const text = [];
-
-            // Need to get the text content of all nodes in the slot reference node
-            let slotContent = node.nextSibling as d.RenderNode | null;
-            while (slotContent && slotContent['s-sn'] === node['s-sn']) {
-              if (slotContent.nodeType === NODE_TYPES.TEXT_NODE || slotContent.nodeType === NODE_TYPES.ELEMENT_NODE) {
-                text.push(slotContent.textContent?.trim() ?? '');
-              }
-              slotContent = slotContent.nextSibling as d.RenderNode | null;
-            }
-
-            return text.filter((ref) => ref !== '').join(' ');
-          })
-          .filter((text) => text !== '')
-          .join(' ');
-
-        // Pad the string to return
-        return ' ' + textContent + ' ';
-      },
-
-      // To mimic shadow root behavior, we need to overwrite all nodes in a slot
-      // reference node. If a default slot reference node exists, the text content will be
-      // placed there. Otherwise, the new text node will be hidden
-      set(value: string | null) {
-        const slotRefNodes = getAllChildSlotNodes(this.childNodes);
-
-        slotRefNodes.forEach((node) => {
-          // Remove the existing content of the slot
-          let slotContent = node.nextSibling as d.RenderNode | null;
-          while (slotContent && slotContent['s-sn'] === node['s-sn']) {
-            const tmp = slotContent;
-            slotContent = slotContent.nextSibling as d.RenderNode | null;
-            tmp.remove();
-          }
-
-          // If this is a default slot, add the text node in the slot location.
-          // Otherwise, destroy the slot reference node
-          if (node['s-sn'] === '') {
-            const textNode = this.ownerDocument.createTextNode(value);
-            textNode['s-sn'] = '';
-            node.parentElement.insertBefore(textNode, node.nextSibling);
-          } else {
-            node.remove();
-          }
-        });
-      },
-    });
-  } else {
-    Object.defineProperty(hostElementPrototype, 'textContent', {
-      get(): string | null {
-        // get the 'default slot', which would be the first slot in a shadow tree (if we were using one), whose name is
-        // the empty string
-        const slotNode = getHostSlotNode(this.childNodes, '', this.tagName);
-        // when a slot node is found, the textContent _may_ be found in the next sibling (text) node, depending on how
-        // nodes were reordered during the vdom render. first try to get the text content from the sibling.
-        if (slotNode?.nextSibling?.nodeType === NODE_TYPES.TEXT_NODE) {
-          return slotNode.nextSibling.textContent;
-        } else if (slotNode) {
-          return slotNode.textContent;
-        } else {
-          // fallback to the original implementation
-          return this.__textContent;
-        }
-      },
-
-      set(value: string | null) {
-        // get the 'default slot', which would be the first slot in a shadow tree (if we were using one), whose name is
-        // the empty string
-        const slotNode = getHostSlotNode(this.childNodes, '', this.tagName);
-        // when a slot node is found, the textContent _may_ need to be placed in the next sibling (text) node,
-        // depending on how nodes were reordered during the vdom render. first try to set the text content on the
-        // sibling.
-        if (slotNode?.nextSibling?.nodeType === NODE_TYPES.TEXT_NODE) {
-          slotNode.nextSibling.textContent = value;
-        } else if (slotNode) {
-          slotNode.textContent = value;
-        } else {
-          // we couldn't find a slot, but that doesn't mean that there isn't one. if this check ran before the DOM
-          // loaded, we could have missed it. check for a content reference element on the scoped component and insert
-          // it there
-          this.__textContent = value;
-          const contentRefElm = this['s-cr'];
-          if (contentRefElm) {
-            this.insertBefore(contentRefElm, this.firstChild);
-          }
-        }
-      },
-    });
-  }
+  Object.defineProperty(hostElementPrototype, 'textContent', {
+    get: function () {
+      let text = '';
+      const childNodes = this.__childNodes ? this.childNodes : getSlottedChildNodes(this.childNodes);
+      childNodes.forEach((node: d.RenderNode) => (text += node.textContent || ''));
+      return text;
+    },
+    set: function (value) {
+      removeSlottedNodes(this);
+      this.insertAdjacentHTML('beforeend', value);
+    },
+  });
 };
 
-export const patchChildSlotNodes = (elm: HTMLElement, cmpMeta: d.ComponentRuntimeMeta) => {
+/**
+ * Patches the `innerHTML` and `innerText` setters of a scoped component so they replace only
+ * the slotted content. Natively they would also remove the component's rendered nodes and its
+ * content reference node, leaving nothing for the next render to relocate into the slot.
+ * The getters are left as they are.
+ *
+ * @param hostElementPrototype the `Element` to be patched
+ */
+export const patchInnerContentSetters = (hostElementPrototype: HTMLElement) => {
+  if (!globalThis.HTMLElement) return;
+
+  const patchSetter = (
+    proto: object,
+    name: 'innerHTML' | 'innerText',
+    insert: (host: HTMLElement, value: string) => void,
+  ) => {
+    const get = Object.getOwnPropertyDescriptor(proto, name)?.get;
+    if (!get) return;
+    Object.defineProperty(hostElementPrototype, name, {
+      get,
+      set: function (this: d.RenderNode, value) {
+        removeSlottedNodes(this);
+        // light DOM nodes that haven't been relocated into a slot yet
+        (Array.from(internalCall(this, 'childNodes')) as d.RenderNode[]).forEach((node) => {
+          if (!node['s-cn'] && !node['s-nr'] && node['s-hn'] !== this.tagName) node.remove();
+        });
+        insert(this, value ?? '');
+      },
+    });
+  };
+
+  patchSetter(Element.prototype, 'innerHTML', (host, value) => host.insertAdjacentHTML('beforeend', value));
+  patchSetter(HTMLElement.prototype, 'innerText', (host, value) => host.append(value));
+};
+
+/**
+ * Removes the slotted nodes of a scoped component, along with their original location markers.
+ *
+ * @param host the host element of the component
+ */
+const removeSlottedNodes = (host: d.RenderNode) => {
+  const childNodes = host.__childNodes ? host.childNodes : getSlottedChildNodes(host.childNodes);
+  (childNodes as d.RenderNode[]).forEach((node) => {
+    if (node['s-ol']) node['s-ol'].remove();
+    node.remove();
+  });
+};
+
+export const patchChildSlotNodes = (elm: HTMLElement) => {
   class FakeNodeList extends Array {
     item(n: number) {
       return this[n];
     }
   }
-  // TODO(STENCIL-854): Remove code related to legacy shadowDomShim field
-  if (cmpMeta.$flags$ & CMP_FLAGS.needsShadowDomShim) {
-    const childNodesFn = (elm as any).__lookupGetter__('childNodes');
 
-    Object.defineProperty(elm, 'children', {
-      get() {
-        return this.childNodes.map((n: any) => n.nodeType === 1);
-      },
-    });
+  patchHostOriginalAccessor('children', elm);
+  Object.defineProperty(elm, 'children', {
+    get() {
+      return this.childNodes.filter((n: any) => n.nodeType === 1);
+    },
+  });
 
-    Object.defineProperty(elm, 'childElementCount', {
-      get() {
-        return elm.children.length;
-      },
-    });
+  Object.defineProperty(elm, 'childElementCount', {
+    get() {
+      return this.children.length;
+    },
+  });
 
-    Object.defineProperty(elm, 'childNodes', {
-      get() {
-        const childNodes = childNodesFn.call(this) as NodeListOf<d.RenderNode>;
-        if (
-          (plt.$flags$ & PLATFORM_FLAGS.isTmpDisconnected) === 0 &&
-          getHostRef(this).$flags$ & HOST_FLAGS.hasRendered
-        ) {
-          const result = new FakeNodeList();
-          for (let i = 0; i < childNodes.length; i++) {
-            const slot = childNodes[i]['s-nr'];
-            if (slot) {
-              result.push(slot);
-            }
-          }
-          return result;
-        }
-        return FakeNodeList.from(childNodes);
-      },
-    });
-  }
+  patchHostOriginalAccessor('firstChild', elm);
+  Object.defineProperty(elm, 'firstChild', {
+    get() {
+      return this.childNodes[0] || null;
+    },
+  });
+
+  patchHostOriginalAccessor('lastChild', elm);
+  Object.defineProperty(elm, 'lastChild', {
+    get() {
+      return this.childNodes[this.childNodes.length - 1] || null;
+    },
+  });
+
+  patchHostOriginalAccessor('childNodes', elm);
+  Object.defineProperty(elm, 'childNodes', {
+    get() {
+      const result = new FakeNodeList();
+      result.push(...getSlottedChildNodes(this.__childNodes));
+      return result;
+    },
+  });
 };
 
+/// SLOTTED NODES ///
+
 /**
- * Recursively finds all slot reference nodes ('s-sr') in a series of child nodes.
+ * Patches sibling accessors of a 'slotted' node within a non-shadow component.
+ * Meaning whilst stepping through a non-shadow element's nodes, only the mock 'lightDOM' nodes are returned.
+ * Especially relevant when rendering components via SSR... Frameworks will often try to reconcile their
+ * VDOM with the real DOM by stepping through nodes with 'nextSibling' et al.
+ * - `nextSibling`
+ * - `nextElementSibling`
+ * - `previousSibling`
+ * - `previousElementSibling`
  *
- * @param childNodes The set of child nodes to search for slot reference nodes.
- * @returns An array of slot reference nodes.
+ * @param node the slotted node to be patched
  */
-const getAllChildSlotNodes = (childNodes: NodeListOf<ChildNode>): d.RenderNode[] => {
-  const slotRefNodes = [];
+export const patchSlottedNode = (node: Node) => {
+  if (!node || (node as any).__nextSibling !== undefined || !globalThis.Node) return;
 
-  for (const childNode of Array.from(childNodes) as d.RenderNode[]) {
-    if (childNode['s-sr']) {
-      slotRefNodes.push(childNode);
-    }
-    slotRefNodes.push(...getAllChildSlotNodes(childNode.childNodes));
+  patchNextSibling(node);
+  patchPreviousSibling(node);
+  patchParentNode(node);
+
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    patchNextElementSibling(node as Element);
+    patchPreviousElementSibling(node as Element);
   }
-
-  return slotRefNodes;
 };
-
-const getSlotName = (node: d.RenderNode) =>
-  node['s-sn'] || (node.nodeType === 1 && (node as Element).getAttribute('slot')) || '';
 
 /**
- * Recursively searches a series of child nodes for a slot with the provided name.
- * @param childNodes the nodes to search for a slot with a specific name.
- * @param slotName the name of the slot to match on.
- * @param hostName the host name of the slot to match on.
- * @returns a reference to the slot node that matches the provided name, `null` otherwise
+ * Patches the `nextSibling` accessor of a non-shadow slotted node
+ *
+ * @param node the slotted node to be patched
  */
-const getHostSlotNode = (childNodes: NodeListOf<ChildNode>, slotName: string, hostName: string) => {
-  let i = 0;
-  let childNode: d.RenderNode;
+const patchNextSibling = (node: Node) => {
+  // already been patched? return
+  if (!node || (node as any).__nextSibling) return;
 
-  for (; i < childNodes.length; i++) {
-    childNode = childNodes[i] as any;
-    if (childNode['s-sr'] && childNode['s-sn'] === slotName && childNode['s-hn'] === hostName) {
-      return childNode;
-    }
-    childNode = getHostSlotNode(childNode.childNodes, slotName, hostName);
-    if (childNode) {
-      return childNode;
-    }
-  }
-  return null;
+  patchHostOriginalAccessor('nextSibling', node);
+  Object.defineProperty(node, 'nextSibling', {
+    get: function () {
+      const parentNodes = this['s-ol']?.parentNode.childNodes;
+      const index = parentNodes?.indexOf(this);
+      if (parentNodes && index > -1) {
+        return parentNodes[index + 1] || null;
+      }
+      return this.__nextSibling;
+    },
+  });
 };
 
-const getHostSlotChildNodes = (n: d.RenderNode, slotName: string) => {
-  const childNodes: d.RenderNode[] = [n];
-  while ((n = n.nextSibling as any) && (n as d.RenderNode)['s-sn'] === slotName) {
-    childNodes.push(n as any);
-  }
-  return childNodes;
+/**
+ * Patches the `nextElementSibling` accessor of a non-shadow slotted node
+ *
+ * @param element the slotted element node to be patched
+ */
+const patchNextElementSibling = (element: Element) => {
+  if (!element || (element as any).__nextElementSibling) return;
+
+  patchHostOriginalAccessor('nextElementSibling', element);
+  Object.defineProperty(element, 'nextElementSibling', {
+    get: function () {
+      const parentEles = this['s-ol']?.parentNode.children;
+      const index = parentEles?.indexOf(this);
+      if (parentEles && index > -1) {
+        return parentEles[index + 1] || null;
+      }
+      return this.__nextElementSibling;
+    },
+  });
 };
+
+/**
+ * Patches the `previousSibling` accessor of a non-shadow slotted node
+ *
+ * @param node the slotted node to be patched
+ */
+const patchPreviousSibling = (node: Node) => {
+  if (!node || (node as any).__previousSibling) return;
+
+  patchHostOriginalAccessor('previousSibling', node);
+  Object.defineProperty(node, 'previousSibling', {
+    get: function () {
+      const parentNodes = this['s-ol']?.parentNode.childNodes;
+      const index = parentNodes?.indexOf(this);
+      if (parentNodes && index > -1) {
+        return parentNodes[index - 1] || null;
+      }
+      return this.__previousSibling;
+    },
+  });
+};
+
+/**
+ * Patches the `previousElementSibling` accessor of a non-shadow slotted node
+ *
+ * @param element the slotted element node to be patched
+ */
+const patchPreviousElementSibling = (element: Element) => {
+  if (!element || (element as any).__previousElementSibling) return;
+
+  patchHostOriginalAccessor('previousElementSibling', element);
+  Object.defineProperty(element, 'previousElementSibling', {
+    get: function () {
+      const parentNodes = this['s-ol']?.parentNode.children;
+      const index = parentNodes?.indexOf(this);
+
+      if (parentNodes && index > -1) {
+        return parentNodes[index - 1] || null;
+      }
+      return this.__previousElementSibling;
+    },
+  });
+};
+
+/**
+ * Patches the `parentNode` accessor of a non-shadow slotted node
+ *
+ * @param node the slotted node to be patched
+ */
+export const patchParentNode = (node: Node) => {
+  if (!node || (node as any).__parentNode) return;
+
+  patchHostOriginalAccessor('parentNode', node);
+  Object.defineProperty(node, 'parentNode', {
+    get: function () {
+      return this['s-ol']?.parentNode || this.__parentNode;
+    },
+    set: function (value) {
+      // mock-doc sets parentNode?
+      this.__parentNode = value;
+    },
+  });
+};
+
+/// UTILS ///
+
+const validElementPatches = ['children', 'nextElementSibling', 'previousElementSibling'] as const;
+const validNodesPatches = [
+  'childNodes',
+  'firstChild',
+  'lastChild',
+  'nextSibling',
+  'previousSibling',
+  'textContent',
+  'parentNode',
+] as const;
+
+/**
+ * Patches a node or element; making it's original accessor method available under a new name.
+ * e.g. `nextSibling` -> `__nextSibling`
+ *
+ * @param accessorName - the name of the accessor to patch
+ * @param node - the node to patch
+ */
+function patchHostOriginalAccessor(
+  accessorName: (typeof validElementPatches)[number] | (typeof validNodesPatches)[number],
+  node: Node,
+) {
+  /**
+   * skip this method if a component was imported from a non-browser environment
+   */
+  if (!globalThis.Node || !globalThis.Element) {
+    return;
+  }
+
+  let accessor;
+  if (validElementPatches.includes(accessorName as any)) {
+    accessor = Object.getOwnPropertyDescriptor(Element.prototype, accessorName);
+  } else if (validNodesPatches.includes(accessorName as any)) {
+    accessor = Object.getOwnPropertyDescriptor(Node.prototype, accessorName);
+  }
+  if (!accessor) {
+    // for mock-doc
+    accessor = Object.getOwnPropertyDescriptor(node, accessorName);
+  }
+  if (accessor) Object.defineProperty(node, '__' + accessorName, accessor);
+}
+
+/**
+ * Get the original / internal accessor or method of a node or element.
+ *
+ * @param node - the node to get the accessor from
+ * @param method - the name of the accessor to get
+ *
+ * @returns the original accessor or method of the node
+ */
+export function internalCall<T extends d.RenderNode, P extends keyof d.RenderNode>(node: T, method: P): T[P] {
+  if ('__' + method in node) {
+    const toReturn = node[('__' + method) as keyof d.RenderNode] as T[P];
+    if (typeof toReturn !== 'function') return toReturn;
+    return toReturn.bind(node) as T[P];
+  } else {
+    if (typeof node[method] !== 'function') return node[method];
+    return node[method].bind(node) as T[P];
+  }
+}

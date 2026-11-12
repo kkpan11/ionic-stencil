@@ -2,6 +2,7 @@ import fs from 'fs-extra';
 import { dirname, join, relative } from 'path';
 import { rollup } from 'rollup';
 import ts, { ModuleResolutionKind, ScriptTarget } from 'typescript';
+import url from 'url';
 
 import { NODE_BUILTINS } from '../utils/constants';
 import { BuildOptions, getOptions } from '../utils/options';
@@ -29,11 +30,9 @@ const pkgs: TestPackage[] = [
       'dev-server/templates/directory-index.html',
       'dev-server/templates/initial-load.html',
       'dev-server/connector.html',
-      'dev-server/open-in-editor-api.js',
       'dev-server/server-process.js',
       'dev-server/server-worker-thread.js',
       'dev-server/visualstudio.vbs',
-      'dev-server/ws.js',
       'dev-server/xdg-open',
     ],
   },
@@ -113,7 +112,7 @@ const pkgs: TestPackage[] = [
       'sys/',
       'testing/',
     ],
-    files: ['CHANGELOG.md', 'LICENSE.md', 'readme.md'],
+    files: ['CHANGELOG.md', 'LICENSE', 'readme.md'],
     hasBin: true,
   },
 ];
@@ -260,9 +259,9 @@ function validateDts(opts: BuildOptions, dtsEntries: string[]): void {
  * @param opts build options to be used to validate the compiler
  */
 async function validateCompiler(opts: BuildOptions): Promise<void> {
-  const compilerPath = join(opts.output.compilerDir, 'stencil.js');
-  const cliPath = join(opts.output.cliDir, 'index.cjs');
-  const sysNodePath = join(opts.output.sysNodeDir, 'index.js');
+  const compilerPath = url.pathToFileURL(join(opts.output.compilerDir, 'stencil.js')).pathname;
+  const cliPath = url.pathToFileURL(join(opts.output.cliDir, 'index.cjs')).pathname;
+  const sysNodePath = url.pathToFileURL(join(opts.output.sysNodeDir, 'index.js')).pathname;
 
   const compiler = await import(compilerPath);
   const cli = await import(cliPath);
@@ -367,7 +366,7 @@ async function validateModuleTreeshake(opts: BuildOptions, moduleName: string, e
         },
         load(id) {
           if (id === '@stencil/core/internal/app-globals') {
-            return 'export const globalScripts = () => {};';
+            return 'export const globalScripts = () => {};\nexport const globalStyles = "";';
           }
           if (id === virtualInputId) {
             return `import "${entryId}";`;

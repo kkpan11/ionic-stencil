@@ -31,13 +31,20 @@ import type {
 import type { JsonDocMethodParameter } from './stencil-public-docs';
 import type { ComponentInterface, ListenTargetOptions, VNode } from './stencil-public-runtime';
 
+export interface DocData {
+  hostIds: number;
+  rootLevelIds: number;
+  staticComponents: Set<string>;
+}
+export type StencilDocument = Document & { _stencilDocData: DocData };
+
 export interface SourceMap {
   file: string;
   mappings: string;
   names: string[];
   sourceRoot?: string;
   sources: string[];
-  sourcesContent?: string[];
+  sourcesContent?: (string | null)[];
   version: number;
 }
 
@@ -71,6 +78,11 @@ export interface ImportData {
 export interface SerializeImportData extends ImportData {
   importeePath: string;
   importerPath?: string;
+  /**
+   * True if this is a node module import (e.g. using ~ prefix like ~foo/style.css)
+   * These should be treated as bare module specifiers and not have ./ prepended
+   */
+  isNodeModule?: boolean;
 }
 
 export interface BuildFeatures {
@@ -82,6 +94,7 @@ export interface BuildFeatures {
   // dom
   shadowDom: boolean;
   shadowDelegatesFocus: boolean;
+  shadowSlotAssignmentManual: boolean;
   scoped: boolean;
 
   // render
@@ -126,27 +139,19 @@ export interface BuildFeatures {
   hostListenerTarget: boolean;
   method: boolean;
   prop: boolean;
+  propChangeCallback: boolean;
   propMutable: boolean;
   state: boolean;
-  watchCallback: boolean;
   member: boolean;
   updatable: boolean;
   propBoolean: boolean;
   propNumber: boolean;
   propString: boolean;
+  serializer: boolean;
+  deserializer: boolean;
 
   // lifecycle events
   lifecycle: boolean;
-  cmpDidLoad: boolean;
-  cmpShouldUpdate: boolean;
-  cmpWillLoad: boolean;
-  cmpDidUpdate: boolean;
-  cmpWillUpdate: boolean;
-  cmpWillRender: boolean;
-  cmpDidRender: boolean;
-  cmpDidUnload: boolean;
-  connectedCallback: boolean;
-  disconnectedCallback: boolean;
   asyncLoading: boolean;
 
   // attr
@@ -180,18 +185,23 @@ export interface BuildConditionals extends Partial<BuildFeatures> {
   cloneNodeFix?: boolean;
   hydratedAttribute?: boolean;
   hydratedClass?: boolean;
+  hydratedSelectorName?: string;
   initializeNextTick?: boolean;
+  // TODO(STENCIL-1305): remove this option
   scriptDataOpts?: boolean;
   // TODO(STENCIL-854): Remove code related to legacy shadowDomShim field
   shadowDomShim?: boolean;
   asyncQueue?: boolean;
+  // TODO: deprecated in favour of `setTagTransformer` and `transformTag`. Remove in 5.0
   transformTagName?: boolean;
+  additionalTagTransformers?: boolean | 'prod';
   attachStyles?: boolean;
 
   // TODO(STENCIL-914): remove this option when `experimentalSlotFixes` is the default behavior
   experimentalSlotFixes?: boolean;
   // TODO(STENCIL-1086): remove this option when it's the default behavior
   experimentalScopedSlotChanges?: boolean;
+  addGlobalStyleToComponents?: boolean | 'client';
 }
 
 export type ModuleFormat =
@@ -273,7 +283,10 @@ export interface BuildCtx {
   scriptsDeleted: string[];
   startTime: number;
   styleBuildCount: number;
-  stylesPromise: Promise<void>;
+  /**
+   * A promise that resolves to the global styles for the current build.
+   */
+  stylesPromise: Promise<string>;
   stylesUpdated: BuildStyleUpdate[];
   timeSpan: LoggerTimeSpan;
   timestamp: string;
@@ -452,6 +465,12 @@ export interface CollectionCompilerVersion {
 
 export interface CollectionManifest {
   entries?: CollectionComponentEntryPath[];
+  /**
+   * Paths to mixin/abstract class modules that can be extended by consuming projects.
+   * These are modules that contain classes with Stencil static members (properties, states, etc.)
+   * but are not components themselves (no @Component decorator / tag name).
+   */
+  mixins?: CollectionComponentEntryPath[];
   collections?: CollectionDependencyManifest[];
   global?: string;
   compiler?: CollectionCompilerVersion;
@@ -537,8 +556,8 @@ export interface ComponentCompilerFeatures {
   hasComponentDidUpdateFn: boolean;
   hasComponentWillRenderFn: boolean;
   hasComponentDidRenderFn: boolean;
-  hasComponentDidUnloadFn: boolean;
   hasConnectedCallbackFn: boolean;
+  hasDeserializer: boolean;
   hasDisconnectedCallbackFn: boolean;
   hasElement: boolean;
   hasEvent: boolean;
@@ -555,6 +574,7 @@ export interface ComponentCompilerFeatures {
   hasMember: boolean;
   hasMethod: boolean;
   hasMode: boolean;
+  hasModernPropertyDecls: boolean;
   hasProp: boolean;
   hasPropBoolean: boolean;
   hasPropNumber: boolean;
@@ -562,6 +582,8 @@ export interface ComponentCompilerFeatures {
   hasPropMutable: boolean;
   hasReflect: boolean;
   hasRenderFn: boolean;
+  hasSerializer: boolean;
+  hasSlot: boolean;
   hasState: boolean;
   hasStyle: boolean;
   hasVdomAttribute: boolean;
@@ -579,6 +601,7 @@ export interface ComponentCompilerFeatures {
   htmlAttrNames: string[];
   htmlTagNames: string[];
   htmlParts: string[];
+  htmlSlots: string[];
   isUpdateable: boolean;
   /**
    * A plain component is one that doesn't have:
@@ -607,6 +630,11 @@ export interface ComponentCompilerMeta extends ComponentCompilerFeatures {
    * `null` then `attachInternals` should not be called.
    */
   attachInternalsMemberName: string | null;
+  /**
+   * Custom states to initialize on the ElementInternals.states CustomStateSet.
+   * These are defined via @AttachInternals({ states: {...} }).
+   */
+  attachInternalsCustomStates: ComponentCompilerCustomState[];
   componentClassName: string;
   /**
    * A list of web component tag names that are either:
@@ -620,6 +648,7 @@ export interface ComponentCompilerMeta extends ComponentCompilerFeatures {
    * - indirectly/transitively reference the current component directly in their JSX/h() function
    */
   dependents: string[];
+  deserializers: ComponentCompilerChangeHandler[];
   /**
    * A list of web component tag names that are directly referenced in a Stencil component's JSX/h() function
    */
@@ -629,6 +658,7 @@ export interface ComponentCompilerMeta extends ComponentCompilerFeatures {
    */
   directDependents: string[];
   docs: CompilerJsDoc;
+  doesExtend: boolean;
   elementRef: string;
   encapsulation: Encapsulation;
   events: ComponentCompilerEvent[];
@@ -643,7 +673,13 @@ export interface ComponentCompilerMeta extends ComponentCompilerFeatures {
   listeners: ComponentCompilerListener[];
   methods: ComponentCompilerMethod[];
   properties: ComponentCompilerProperty[];
+  serializers: ComponentCompilerChangeHandler[];
   shadowDelegatesFocus: boolean;
+  /**
+   * Slot assignment mode for shadow DOM. 'manual', enables imperative slotting
+   * using HTMLSlotElement.assign(). Only applicable when encapsulation is 'shadow'.
+   */
+  slotAssignment: 'manual' | null;
   sourceFilePath: string;
   sourceMapPath: string;
   states: ComponentCompilerState[];
@@ -651,7 +687,7 @@ export interface ComponentCompilerMeta extends ComponentCompilerFeatures {
   styles: StyleCompiler[];
   tagName: string;
   virtualProperties: ComponentCompilerVirtualProperty[];
-  watchers: ComponentCompilerWatch[];
+  watchers: ComponentCompilerChangeHandler[];
 }
 
 /**
@@ -675,6 +711,9 @@ export interface ComponentCompilerStaticProperty {
   reflect?: boolean;
   docs: CompilerJsDoc;
   defaultValue?: string;
+  getter: boolean;
+  setter: boolean;
+  ogPropName?: string;
 }
 
 /**
@@ -745,6 +784,17 @@ export interface ComponentCompilerTypeReference {
    * An ID for this type which is unique within a Stencil project.
    */
   id: string;
+  /**
+   * Whether this type was imported as a default import (e.g., `import MyEnum from './my-enum'`)
+   * vs a named import (e.g., `import { MyType } from './my-type'`)
+   */
+  isDefault?: boolean;
+  /**
+   * The name used in the import statement (before any user-defined alias).
+   * For `import { XAxisOption as moo }`, this would be "XAxisOption".
+   * This is the name exported by the source module.
+   */
+  referenceLocation?: string;
 }
 
 /**
@@ -807,9 +857,12 @@ export interface ComponentCompilerMethodComplexType {
   return: string;
 }
 
-export interface ComponentCompilerWatch {
+export interface ComponentCompilerChangeHandler {
   propName: string;
   methodName: string;
+  handlerOptions?: {
+    immediate?: boolean;
+  };
 }
 
 export interface ComponentCompilerMethod extends ComponentCompilerStaticMethod {
@@ -819,6 +872,27 @@ export interface ComponentCompilerMethod extends ComponentCompilerStaticMethod {
 
 export interface ComponentCompilerState {
   name: string;
+}
+
+/**
+ * Metadata about a custom state defined via @AttachInternals({ states: {...} })
+ *
+ * Custom states are exposed via the ElementInternals.states CustomStateSet
+ * and can be targeted with the CSS :state() pseudo-class.
+ */
+export interface ComponentCompilerCustomState {
+  /**
+   * The name of the custom state (without dashes)
+   */
+  name: string;
+  /**
+   * The initial value of the state
+   */
+  initialValue: boolean;
+  /**
+   * Optional JSDoc description for the state
+   */
+  docs: string;
 }
 
 /**
@@ -849,10 +923,29 @@ export interface CompilerJsDocTagInfo {
   text?: string;
 }
 
+/**
+ * The (internal) representation of a CSS block comment in a CSS, Sass, etc. file. This data structure is used during
+ * the initial compilation phases of Stencil, as a piece of {@link ComponentCompilerMeta}.
+ */
 export interface CompilerStyleDoc {
+  /**
+   * The name of the CSS property
+   */
   name: string;
+  /**
+   * The user-defined description of the CSS property
+   */
   docs: string;
+  /**
+   * The JSDoc-style annotation (e.g. `@prop`) that was used in the block comment to detect the comment.
+   * Used to inform Stencil where the start of a new property's description starts (and where the previous description
+   * ends).
+   */
   annotation: 'prop';
+  /**
+   * The Stencil style-mode that is associated with this property.
+   */
+  mode: string;
 }
 
 export interface CompilerAssetDir {
@@ -872,7 +965,7 @@ export interface ComponentCompilerData {
 export interface ComponentConstructor {
   is?: string;
   properties?: ComponentConstructorProperties;
-  watchers?: ComponentConstructorWatchers;
+  watchers?: ComponentConstructorChangeHandlers;
   events?: ComponentConstructorEvent[];
   listeners?: ComponentConstructorListener[];
   style?: string;
@@ -882,14 +975,16 @@ export interface ComponentConstructor {
   cmpMeta?: ComponentRuntimeMeta;
   isProxied?: boolean;
   isStyleRegistered?: boolean;
+  serializers?: ComponentConstructorChangeHandlers;
+  deserializers?: ComponentConstructorChangeHandlers;
 }
 
 /**
  * A mapping from class member names to a list of methods which are watching
  * them.
  */
-export interface ComponentConstructorWatchers {
-  [propName: string]: string[];
+export interface ComponentConstructorChangeHandlers {
+  [propName: string]: { [methodName: string]: number }[];
 }
 
 export interface ComponentTestingConstructor extends ComponentConstructor {
@@ -1055,6 +1150,8 @@ export interface HostElement extends HTMLElement {
   host?: Element;
   forceUpdate?: () => void;
 
+  __stencil__getHostRef?: () => HostRef;
+
   // "s-" prefixed properties should not be property renamed
   // and should be common between all versions of stencil
 
@@ -1100,6 +1197,13 @@ export interface HostElement extends HTMLElement {
   ['s-sc']?: string;
 
   /**
+   * Scope Ids
+   * All the possible scope ids of this component when using scoped css encapsulation
+   * or using shadow dom but the browser doesn't support it
+   */
+  ['s-scs']?: string[];
+
+  /**
    * Hot Module Replacement, dev mode only
    *
    * This function should be defined by the HMR-supporting runtime and should
@@ -1107,6 +1211,10 @@ export interface HostElement extends HTMLElement {
    */
   ['s-hmr']?: (versionId: string) => void;
 
+  /**
+   * A list of nested nested hydration promises that
+   * must be resolved for the top, ancestor component to be fully hydrated
+   */
   ['s-p']?: Promise<void>[];
 
   componentOnReady?: () => Promise<this>;
@@ -1116,23 +1224,23 @@ export interface HydrateResults {
   buildId: string;
   diagnostics: Diagnostic[];
   url: string;
-  host: string;
-  hostname: string;
-  href: string;
-  port: string;
-  pathname: string;
-  search: string;
-  hash: string;
-  html: string;
+  host: string | null;
+  hostname: string | null;
+  href: string | null;
+  port: string | null;
+  pathname: string | null;
+  search: string | null;
+  hash: string | null;
+  html: string | null;
   components: HydrateComponent[];
   anchors: HydrateAnchorElement[];
   imgs: HydrateImgElement[];
   scripts: HydrateScriptElement[];
   styles: HydrateStyleElement[];
   staticData: HydrateStaticData[];
-  title: string;
+  title: string | null;
   hydratedCount: number;
-  httpStatus: number;
+  httpStatus: number | null;
 }
 
 export interface HydrateComponent {
@@ -1161,7 +1269,9 @@ export interface HydrateScriptElement extends HydrateElement {
 }
 
 export interface HydrateStyleElement extends HydrateElement {
+  id?: string;
   href?: string;
+  content?: string;
 }
 
 export interface HydrateStaticData {
@@ -1206,6 +1316,13 @@ export type ModuleMap = Map<string, Module>;
  */
 export interface Module {
   cmps: ComponentCompilerMeta[];
+  isMixin: boolean;
+  isExtended: boolean;
+  /**
+   * Indicates this module contains mixin/abstract classes that can be extended by other projects.
+   * These are classes with Stencil static members (properties, states, etc.) but no @Component decorator.
+   */
+  hasExportableMixins: boolean;
   /**
    * A collection of modules that a component will need. The modules in this list must have import statements generated
    * in order for the component to function.
@@ -1223,10 +1340,17 @@ export interface Module {
   htmlAttrNames: string[];
   htmlTagNames: string[];
   htmlParts: string[];
+  htmlSlots: string[];
   isCollectionDependency: boolean;
   isLegacy: boolean;
   jsFilePath: string;
   localImports: string[];
+  /**
+   * Source file paths of functional components that are used in JSX/h() calls.
+   * This is used to ensure htmlTagNames are properly propagated from functional
+   * component dependencies even when they're accessed indirectly (e.g., via barrel files).
+   */
+  functionalComponentDeps: string[];
   originalImports: string[];
   originalCollectionComponentPath: string;
   potentialCmpRefs: string[];
@@ -1259,10 +1383,12 @@ export interface Plugin {
     sourceText: string,
     id: string,
     context: PluginCtx,
-  ) => Promise<PluginTransformResults> | PluginTransformResults | string;
+  ) => Promise<PluginTransformResults> | PluginTransformResults;
 }
 
-export interface PluginTransformResults {
+export type PluginTransformResults = PluginTransformationDescriptor | string | null;
+
+export interface PluginTransformationDescriptor {
   code?: string;
   map?: string;
   id?: string;
@@ -1352,14 +1478,15 @@ export interface RenderNode extends HostElement {
   ['s-cn']?: boolean;
 
   /**
-   * Is a slot reference node:
-   * This is a node that represents where a slot
-   * was originally located.
+   * Is a `slot` node when `shadow: false` (or `scoped: true`).
+   *
+   * This is a node (either empty text-node or `<slot-fb>` element)
+   * that represents where a `<slot>` is located in the original JSX.
    */
   ['s-sr']?: boolean;
 
   /**
-   * Slot name
+   * Slot name of either the slot itself or the slotted node
    */
   ['s-sn']?: string;
 
@@ -1393,10 +1520,16 @@ export interface RenderNode extends HostElement {
 
   /**
    * Node reference:
-   * This is a reference for a original location node
+   * This is a reference from an original location node
    * back to the node that's been moved around.
    */
-  ['s-nr']?: RenderNode;
+  ['s-nr']?: PatchedSlotNode | RenderNode;
+
+  /**
+   * Original Order:
+   * During SSR; a number representing the order of a slotted node
+   */
+  ['s-oo']?: number;
 
   /**
    * Scope Id
@@ -1418,6 +1551,147 @@ export interface RenderNode extends HostElement {
    * empty "" for shadow, "c" from scoped
    */
   ['s-en']?: '' | /*shadow*/ 'c' /*scoped*/;
+
+  /**
+   * On a `scoped: true` component
+   * with `experimentalSlotFixes` flag enabled,
+   * returns the internal `childNodes` of the component
+   */
+  readonly __childNodes?: NodeListOf<ChildNode>;
+
+  /**
+   * On a `scoped: true` component
+   * with `experimentalSlotFixes` flag enabled,
+   * returns the internal `children` of the component
+   */
+  readonly __children?: HTMLCollectionOf<Element>;
+
+  /**
+   * On a `scoped: true` component
+   * with `experimentalSlotFixes` flag enabled,
+   * returns the internal `firstChild` of the component
+   */
+  readonly __firstChild?: ChildNode;
+
+  /**
+   * On a `scoped: true` component
+   * with `experimentalSlotFixes` flag enabled,
+   * returns the internal `lastChild` of the component
+   */
+  readonly __lastChild?: ChildNode;
+
+  /**
+   * On a `scoped: true` component
+   * with `experimentalSlotFixes` flag enabled,
+   * returns the internal `textContent` of the component
+   */
+  __textContent?: string;
+
+  /**
+   * On a `scoped: true` component
+   * with `experimentalSlotFixes` flag enabled,
+   * gives access to the original `append` method
+   */
+  __append?: (...nodes: (Node | string)[]) => void;
+
+  /**
+   * On a `scoped: true` component
+   * with `experimentalSlotFixes` flag enabled,
+   * gives access to the original `prepend` method
+   */
+  __prepend?: (...nodes: (Node | string)[]) => void;
+
+  /**
+   * On a `scoped: true` component
+   * with `experimentalSlotFixes` flag enabled,
+   * gives access to the original `appendChild` method
+   */
+  __appendChild?: <T extends Node>(newChild: T) => T;
+
+  /**
+   * On a `scoped: true` component
+   * with `experimentalSlotFixes` flag enabled,
+   * gives access to the original `insertBefore` method
+   */
+  __insertBefore?: <T extends Node>(node: T, child: Node | null) => T;
+
+  /**
+   * On a `scoped: true` component
+   * with `experimentalSlotFixes` flag enabled,
+   * gives access to the original `removeChild` method
+   */
+  __removeChild?: <T extends Node>(child: T) => T;
+}
+
+export interface PatchedSlotNode extends Node {
+  /**
+   * Slot name
+   */
+  ['s-sn']?: string;
+
+  /**
+   * Original Location Reference:
+   * A reference pointing to the comment
+   * which represents the original location
+   * before it was moved to its slot.
+   */
+  ['s-ol']?: RenderNode;
+
+  /**
+   * Slot host tag name:
+   * This is the tag name of the element where this node
+   * has been moved to during slot relocation.
+   *
+   * This allows us to check if the node has been moved and prevent
+   * us from thinking a node _should_ be moved when it may already be in
+   * its final destination.
+   *
+   * This value is set to `undefined` whenever the node is put back into its original location.
+   */
+  ['s-sh']?: string;
+
+  /**
+   * Is a `slot` node when `shadow: false` (or `scoped: true`).
+   *
+   * This is a node (either empty text-node or `<slot-fb>` element)
+   * that represents where a `<slot>` is located in the original JSX.
+   */
+  ['s-sr']?: boolean;
+
+  /**
+   * On a `scoped: true` component
+   * with `experimentalSlotFixes` flag enabled,
+   * returns the actual `parentNode` of the component
+   */
+  __parentNode?: RenderNode;
+
+  /**
+   * On a `scoped: true` component
+   * with `experimentalSlotFixes` flag enabled,
+   * returns the actual `nextSibling` of the component
+   */
+  __nextSibling?: RenderNode;
+
+  /**
+   * On a `scoped: true` component
+   * with `experimentalSlotFixes` flag enabled,
+   * returns the actual `previousSibling` of the component
+   */
+  __previousSibling?: RenderNode;
+
+  /**
+   * On a `scoped: true` component
+   * with `experimentalSlotFixes` flag enabled,
+   * returns the actual `nextElementSibling` of the component
+   */
+  __nextElementSibling?: RenderNode;
+
+  /**
+   * On a `scoped: true` component
+   * with `experimentalSlotFixes` flag enabled,
+   * returns the actual `nextElementSibling` of the component
+   */
+  __previousElementSibling?: RenderNode;
 }
 
 export type LazyBundlesRuntimeData = LazyBundleRuntimeData[];
@@ -1442,7 +1716,13 @@ export type ComponentRuntimeMetaCompact = [
   ComponentRuntimeHostListener[]?,
 
   /** watchers */
-  ComponentConstructorWatchers?,
+  ComponentConstructorChangeHandlers?,
+
+  /** serializers */
+  ComponentConstructorChangeHandlers?,
+
+  /** deserializers */
+  ComponentConstructorChangeHandlers?,
 ];
 
 /**
@@ -1452,7 +1732,7 @@ export interface ComponentRuntimeMeta {
   /**
    * This number is used to hold a series of bitflags for various features we
    * support on components. The flags which this value is intended to store are
-   * documented in the {@link CMP_FLAGS} enum.
+   * documented in the `CMP_FLAGS` enum.
    */
   $flags$: number;
   /**
@@ -1478,11 +1758,19 @@ export interface ComponentRuntimeMeta {
   /**
    * Information about which class members have watchers attached on the component.
    */
-  $watchers$?: ComponentConstructorWatchers;
+  $watchers$?: ComponentConstructorChangeHandlers;
   /**
    * A bundle ID used for lazy loading.
    */
   $lazyBundleId$?: string;
+  /**
+   * Information about which class members have prop > attribute serializers attached on the component.
+   */
+  $serializers$?: ComponentConstructorChangeHandlers;
+  /**
+   * Information about which class members have attribute > prop deserializers attached on the component.
+   */
+  $deserializers$?: ComponentConstructorChangeHandlers;
 }
 
 /**
@@ -1498,7 +1786,7 @@ export interface ComponentRuntimeMembers {
  * The fields are:
  *
  * 1. A number used to hold bitflags for component members. The bit flags which
- * this is intended to store are documented in the {@link MEMBER_FLAGS} enum.
+ * this is intended to store are documented in the `MEMBER_FLAGS` enum.
  * 2. The attribute name to observe.
  */
 export type ComponentRuntimeMember = [number, string?];
@@ -1508,7 +1796,7 @@ export type ComponentRuntimeMember = [number, string?];
  * runtime. The field are:
  *
  * 1. A number used to hold bitflags for listeners. The bit flags which this is
- * intended to store are documented in the {@link LISTENER_FLAGS} enum.
+ * intended to store are documented in the `LISTENER_FLAGS` enum.
  * 2. The event name.
  * 3. The method name.
  */
@@ -1532,7 +1820,7 @@ export type ComponentRuntimeReflectingAttr = [string, string | undefined];
  * keys in a `WeakMap` which maps {@link HostElement} instances to their
  * associated {@link HostRef} instance.
  */
-export type RuntimeRef = HostElement | {};
+export type RuntimeRef = HostElement | { __stencil__getHostRef?: () => HostRef };
 
 /**
  * Interface used to track an Element, it's virtual Node (`VNode`), and other data
@@ -1543,7 +1831,12 @@ export interface HostRef {
   $cmpMeta$: ComponentRuntimeMeta;
   $hostElement$: HostElement;
   $instanceValues$?: Map<string, any>;
+  $serializerValues$?: Map<string, string>;
   $lazyInstance$?: ComponentInterface;
+  /**
+   * A list of callback functions called immediately after a lazy component module has been fetched.
+   */
+  $fetchedCbList$?: ((elm: HostElement) => void)[];
   /**
    * A promise that gets resolved if `BUILD.asyncLoading` is enabled and after the `componentDidLoad`
    * and before the `componentDidUpdate` lifecycle events are triggered.
@@ -1575,6 +1868,15 @@ export interface HostRef {
   $rmListeners$?: (() => void)[];
   $modeName$?: string;
   $renderCount$?: number;
+  /**
+   * Defer connectedCallback until after first render for components with slot relocation.
+   */
+  $deferredConnectedCallback$?: boolean;
+  /**
+   * The number of times this host's lazy component load has failed and been retried.
+   * Used to give up retrying after {@link MAX_LAZY_LOAD_RETRIES} failed attempts.
+   */
+  $loadRetryCount$?: number;
 }
 
 export interface PlatformRuntime {
@@ -1820,6 +2122,12 @@ export interface ScreenshotOptions {
    * more sensitive. Defaults to the testing config `pixelmatchThreshold` value;
    */
   pixelmatchThreshold?: number;
+  /**
+   * Capture the screenshot beyond the viewport.
+   *
+   * @defaultValue `false` if there is no `clip`. `true` otherwise.
+   */
+  captureBeyondViewport?: boolean;
 }
 
 export interface ScreenshotBoundingBox {
@@ -1869,6 +2177,7 @@ export interface CssImportData {
   filePath: string;
   altFilePath?: string;
   styleText?: string | null;
+  modifiers?: string;
 }
 
 export interface CssToEsmImportData {
@@ -1876,6 +2185,11 @@ export interface CssToEsmImportData {
   varName: string;
   url: string;
   filePath: string;
+  /**
+   * True if this is a node module import (e.g. using ~ prefix like ~foo/style.css)
+   * These should be treated as bare module specifiers and not have ./ prepended
+   */
+  isNodeModule?: boolean;
 }
 
 /**
@@ -1886,9 +2200,26 @@ export interface TransformCssToEsmInput {
   module?: 'cjs' | 'esm' | string;
   file?: string;
   tag?: string;
+  tags?: string[];
+  addTagTransformers: boolean;
   encapsulation?: string;
+  /**
+   * The mode under which the CSS will be applied.
+   *
+   * Corresponds to a key used when `@Component`'s `styleUrls` field is an object:
+   * ```ts
+   * @Component({
+   *   tag: 'todo-list',
+   *   styleUrls: {
+   *      ios: 'todo-list.ios.scss',
+   *      md: 'todo-list.md.scss',
+   *   }
+   * })
+   * ```
+   * In the example above, two `TransformCssToEsmInput`s should be created, one for 'ios' and one for 'md' (this field
+   * is not shared by multiple fields, nor is it a composite of multiple modes).
+   */
   mode?: string;
-  commentOriginalSelector?: boolean;
   sourceMap?: boolean;
   minify?: boolean;
   docs?: boolean;
@@ -1910,6 +2241,7 @@ export interface PackageJsonData {
   name?: string;
   version?: string;
   main?: string;
+  exports?: { [key: string]: string | { [key: string]: string } };
   description?: string;
   bin?: { [key: string]: string };
   browser?: string;
@@ -2039,6 +2371,12 @@ declare global {
        * received the correct custom event `detail` data.
        */
       toHaveFirstReceivedEventDetail(eventDetail: any): void;
+
+      /**
+       * When given an EventSpy, checks the last event has
+       * received the correct custom event `detail` data.
+       */
+      toHaveLastReceivedEventDetail(eventDetail: any): void;
 
       /**
        * When given an EventSpy, checks the event at an index
@@ -2311,6 +2649,15 @@ export interface TypesImportData {
  */
 export interface TypesMemberNameData {
   /**
+   * The original name of the import before any aliasing was applied.
+   *
+   * i.e. if a component imports a type as follows:
+   * `import { MyType as MyCoolType } from './my-type';`
+   *
+   * the `originalName` would be 'MyType'. If the import is not aliased, then `originalName` and `localName` will be the same.
+   */
+  originalName: string;
+  /**
    * The name of the type as it's used within a file.
    */
   localName: string;
@@ -2319,6 +2666,11 @@ export interface TypesMemberNameData {
    * file that is using `localName`.
    */
   importName?: string;
+  /**
+   * Whether this is a default import/export (e.g., `import MyEnum from './my-enum'`)
+   * vs a named import/export (e.g., `import { MyType } from './my-type'`)
+   */
+  isDefault?: boolean;
 }
 
 export interface TypesModule {
@@ -2329,6 +2681,13 @@ export interface TypesModule {
   component: string;
   jsx: string;
   element: string;
+  explicitAttributes: string | null;
+  explicitProperties: string | null;
+  requiredProps: Array<{
+    name: string;
+    type: string;
+    complexType?: ComponentCompilerProperty['complexType'];
+  }> | null;
 }
 
 export type TypeInfo = {
@@ -2372,7 +2731,7 @@ export interface CompilerWorkerContext {
 }
 
 /**
- * The methods that are supported on a {@link d.CompilerWorkerContext}
+ * The methods that are supported on a {@link CompilerWorkerContext}
  */
 export type WorkerContextMethod = keyof CompilerWorkerContext;
 

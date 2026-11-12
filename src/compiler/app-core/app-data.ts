@@ -24,23 +24,13 @@ export const getBuildFeatures = (cmps: ComponentCompilerMeta[]): BuildFeatures =
   const slotRelocation = cmps.some((c) => c.encapsulation !== 'shadow' && c.htmlTagNames.includes('slot'));
   const f: BuildFeatures = {
     allRenderFn: cmps.every((c) => c.hasRenderFn),
-    cmpDidLoad: cmps.some((c) => c.hasComponentDidLoadFn),
-    cmpShouldUpdate: cmps.some((c) => c.hasComponentShouldUpdateFn),
-    cmpDidUnload: cmps.some((c) => c.hasComponentDidUnloadFn),
-    cmpDidUpdate: cmps.some((c) => c.hasComponentDidUpdateFn),
-    cmpDidRender: cmps.some((c) => c.hasComponentDidRenderFn),
-    cmpWillLoad: cmps.some((c) => c.hasComponentWillLoadFn),
-    cmpWillUpdate: cmps.some((c) => c.hasComponentWillUpdateFn),
-    cmpWillRender: cmps.some((c) => c.hasComponentWillRenderFn),
     formAssociated: cmps.some((c) => c.formAssociated),
-
-    connectedCallback: cmps.some((c) => c.hasConnectedCallbackFn),
-    disconnectedCallback: cmps.some((c) => c.hasDisconnectedCallbackFn),
+    deserializer: cmps.some((c) => c.hasDeserializer),
     element: cmps.some((c) => c.hasElement),
     event: cmps.some((c) => c.hasEvent),
     hasRenderFn: cmps.some((c) => c.hasRenderFn),
     lifecycle: cmps.some((c) => c.hasLifecycle),
-    asyncLoading: false,
+    asyncLoading: true,
     hostListener: cmps.some((c) => c.hasListener),
     hostListenerTargetWindow: cmps.some((c) => c.hasListenerTargetWindow),
     hostListenerTargetDocument: cmps.some((c) => c.hasListenerTargetDocument),
@@ -50,16 +40,19 @@ export const getBuildFeatures = (cmps: ComponentCompilerMeta[]): BuildFeatures =
     member: cmps.some((c) => c.hasMember),
     method: cmps.some((c) => c.hasMethod),
     mode: cmps.some((c) => c.hasMode),
-    observeAttribute: cmps.some((c) => c.hasAttribute),
+    observeAttribute: cmps.some((c) => c.hasAttribute || c.hasWatchCallback || c.hasDeserializer),
     prop: cmps.some((c) => c.hasProp),
     propBoolean: cmps.some((c) => c.hasPropBoolean),
+    propChangeCallback: cmps.some((c) => c.hasWatchCallback || c.hasDeserializer || c.hasSerializer),
     propNumber: cmps.some((c) => c.hasPropNumber),
     propString: cmps.some((c) => c.hasPropString),
     propMutable: cmps.some((c) => c.hasPropMutable),
-    reflect: cmps.some((c) => c.hasReflect),
+    reflect: cmps.some((c) => c.hasReflect || c.hasSerializer),
     scoped: cmps.some((c) => c.encapsulation === 'scoped'),
+    serializer: cmps.some((c) => c.hasSerializer),
     shadowDom,
     shadowDelegatesFocus: shadowDom && cmps.some((c) => c.shadowDelegatesFocus),
+    shadowSlotAssignmentManual: shadowDom && cmps.some((c) => c.slotAssignment === 'manual'),
     slot,
     slotRelocation,
     state: cmps.some((c) => c.hasState),
@@ -77,10 +70,8 @@ export const getBuildFeatures = (cmps: ComponentCompilerMeta[]): BuildFeatures =
     vdomRender: cmps.some((c) => c.hasVdomRender),
     vdomStyle: cmps.some((c) => c.hasVdomStyle),
     vdomText: cmps.some((c) => c.hasVdomText),
-    watchCallback: cmps.some((c) => c.hasWatchCallback),
     taskQueue: true,
   };
-  f.asyncLoading = f.cmpWillUpdate || f.cmpWillLoad || f.cmpWillRender;
   f.vdomAttribute = f.vdomAttribute || f.reflect;
   f.vdomPropOrAttr = f.vdomPropOrAttr || f.reflect;
 
@@ -134,6 +125,11 @@ const getModuleImports = (moduleMap: ModuleMap, filePath: string, importedModule
     moduleFile.localImports.forEach((localImport) => {
       getModuleImports(moduleMap, localImport, importedModules);
     });
+
+    // Follow functional component dependencies resolved via typeChecker.
+    moduleFile.functionalComponentDeps?.forEach((depPath) => {
+      getModuleImports(moduleMap, depPath, importedModules);
+    });
   }
   return importedModules;
 };
@@ -176,6 +172,7 @@ export const updateBuildConditionals = (config: ValidatedConfig, b: BuildConditi
   b.lifecycleDOMEvents = !!(b.isDebug || config._isTesting || config.extras.lifecycleDOMEvents);
   // TODO(STENCIL-914): remove this option when `experimentalSlotFixes` is the default behavior
   b.scopedSlotTextContentFix = !!config.extras.scopedSlotTextContentFix;
+  // TODO(STENCIL-1305): remove this option
   b.scriptDataOpts = config.extras.scriptDataOpts;
   b.attachStyles = true;
   b.invisiblePrehydration = typeof config.invisiblePrehydration === 'undefined' ? true : config.invisiblePrehydration;
@@ -186,6 +183,7 @@ export const updateBuildConditionals = (config: ValidatedConfig, b: BuildConditi
   if (config.hydratedFlag) {
     b.hydratedAttribute = config.hydratedFlag.selector === 'attribute';
     b.hydratedClass = config.hydratedFlag.selector === 'class';
+    b.hydratedSelectorName = config.hydratedFlag.name;
   } else {
     b.hydratedAttribute = false;
     b.hydratedClass = false;

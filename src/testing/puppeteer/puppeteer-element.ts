@@ -385,11 +385,29 @@ export class E2EElement extends MockHTMLElement implements pd.E2EElementInternal
 
         const computedStyle = window.getComputedStyle(elm, pseudoElt);
 
-        const keys = Object.keys(computedStyle);
+        const keys = [
+          ...Object.keys(computedStyle),
+          /**
+           * include CSS variables defined within the style attribute
+           * of an element, e.g.:
+           * ```
+           * <my-component style="--my-component-text-color: rgb(255, 0, 0);"></my-component>
+           * ```
+           */
+          ...Array.from((elm as HTMLElement).style),
+        ];
 
         keys.forEach((key) => {
           if (isNaN(key as any)) {
-            const value = computedStyle[key as any];
+            const value =
+              /**
+               * access property directly for any known css property
+               */
+              computedStyle[key as any] ||
+              /**
+               * use `getPropertyValue` for css variables
+               */
+              computedStyle.getPropertyValue(key);
             if (value != null) {
               rtn[key] = value;
             }
@@ -508,6 +526,14 @@ export class E2EElement extends MockHTMLElement implements pd.E2EElementInternal
     const frag = parseHtmlToFragment(outerHTML);
 
     const rootElm = frag.firstElementChild;
+
+    /**
+     * in case the user called `newE2EPage` without any content `rootElm` will be undefined
+     * and further operations will fail. We need to check for this case and return early.
+     */
+    if (!rootElm) {
+      return;
+    }
 
     this.nodeName = rootElm.nodeName;
     this.attributes = cloneAttributes(rootElm.attributes);

@@ -1,9 +1,11 @@
 import { Fragment, h } from '@stencil/core';
 import { render } from '@wdio/browser-runner/stencil';
+import { $, browser, expect } from '@wdio/globals';
 
 describe('textContent patch', () => {
   beforeEach(async () => {
     render({
+      components: [],
       template: () => (
         <>
           <text-content-patch-scoped></text-content-patch-scoped>
@@ -20,28 +22,39 @@ describe('textContent patch', () => {
   });
 
   describe('scoped encapsulation', () => {
-    it('should return the content of all slots', () => {
-      const elm = document.querySelector('text-content-patch-scoped-with-slot');
-      expect(elm.textContent.trim()).toBe('Slot content Suffix content');
+    it('should return the content of all slots', async () => {
+      const elm = $('text-content-patch-scoped-with-slot');
+      await expect(await elm.getText()).toBe('Slot content\nSuffix content');
     });
 
-    it('should return an empty string if there is no slotted content', () => {
-      const elm = document.querySelector('text-content-patch-scoped');
-      expect(elm.textContent.trim()).toBe('');
+    it('should have default behaviour when there is no default slot', async () => {
+      const elm = $('text-content-patch-scoped');
+      await expect(await elm.getText()).toBe(`Top content
+Bottom content`);
     });
 
-    it('should overwrite the default slot content', () => {
-      const elm = document.querySelector('text-content-patch-scoped-with-slot');
-      elm.textContent = 'New slot content';
+    it('should overwrite the default slot content', async () => {
+      const elm = await $('text-content-patch-scoped-with-slot');
+      await browser.execute(
+        (elm) => {
+          elm.textContent = 'New slot content';
+        },
+        elm as any as HTMLElement,
+      );
 
-      expect(elm.textContent.trim()).toBe('New slot content');
+      await expect(await elm.getText()).toBe('New slot content');
     });
 
-    it('should not insert the text node if there is no default slot', () => {
-      const elm = document.querySelector('text-content-patch-scoped');
-      elm.textContent = 'New slot content';
+    it('should insert text node if there is no default slot', async () => {
+      const elm = await $('text-content-patch-scoped');
+      await browser.execute(
+        (elm) => {
+          elm.textContent = 'New slot content';
+        },
+        elm as any as HTMLElement,
+      );
 
-      expect(elm.textContent.trim()).toBe('');
+      await expect(await elm.getText()).toBe(`New slot content`);
     });
   });
 });

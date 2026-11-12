@@ -24,7 +24,7 @@ import { getScriptTarget } from '../transform-utils';
  */
 export function transpileModule(
   input: string,
-  config?: d.ValidatedConfig | null,
+  config?: Partial<d.ValidatedConfig> | null,
   compilerCtx?: d.CompilerCtx | null,
   beforeTransformers: ts.TransformerFactory<ts.SourceFile>[] = [],
   afterTransformers: ts.TransformerFactory<ts.SourceFile>[] = [],
@@ -62,8 +62,9 @@ export function transpileModule(
     ...tsConfig,
   };
 
-  config = config || mockValidatedConfig();
-  compilerCtx = compilerCtx || mockCompilerCtx(config);
+  const initConfig = mockValidatedConfig();
+  const mergedConfig: d.ValidatedConfig = { ...initConfig, ...config };
+  compilerCtx = compilerCtx || mockCompilerCtx(mergedConfig);
 
   const sourceFile = ts.createSourceFile(inputFileName, input, options.target);
 
@@ -73,7 +74,7 @@ export function transpileModule(
   const emitCallback: ts.WriteFileCallback = (emitFilePath, data, _w, _e, tsSourceFiles) => {
     if (emitFilePath.endsWith('.js')) {
       outputText = prettifyTSOutput(data);
-      updateModule(config, compilerCtx, buildCtx, tsSourceFiles[0], data, emitFilePath, tsTypeChecker, null);
+      updateModule(mergedConfig, compilerCtx, buildCtx, tsSourceFiles[0], data, emitFilePath, tsTypeChecker, null);
     }
     if (emitFilePath.endsWith('.d.ts')) {
       declarationOutputText = prettifyTSOutput(data);
@@ -97,7 +98,7 @@ export function transpileModule(
   const tsProgram = ts.createProgram([inputFileName], options, compilerHost);
   const tsTypeChecker = tsProgram.getTypeChecker();
 
-  const buildCtx = mockBuildCtx(config, compilerCtx);
+  const buildCtx = mockBuildCtx(mergedConfig, compilerCtx);
 
   const transformOpts: d.TransformOptions = {
     coreImportPath: '@stencil/core',
@@ -111,12 +112,25 @@ export function transpileModule(
 
   tsProgram.emit(undefined, undefined, undefined, undefined, {
     before: [
-      convertDecoratorsToStatic(config, buildCtx.diagnostics, tsTypeChecker, tsProgram),
+      convertDecoratorsToStatic(mergedConfig, buildCtx.diagnostics, tsTypeChecker, tsProgram),
       performAutomaticKeyInsertion,
       ...beforeTransformers,
     ],
     after: [
-      convertStaticToMeta(config, compilerCtx, buildCtx, tsTypeChecker, null, transformOpts),
+      (context) => {
+        let newSource: ts.SourceFile;
+        const visitNode = (node: ts.Node): ts.Node => {
+          // just a patch for testing - source file resolution gets
+          // lost in the after transform phase
+          node.getSourceFile = () => newSource;
+          return ts.visitEachChild(node, visitNode, context);
+        };
+        return (sourceFile: ts.SourceFile): ts.SourceFile => {
+          newSource = sourceFile;
+          return visitNode(sourceFile) as ts.SourceFile;
+        };
+      },
+      convertStaticToMeta(mergedConfig, compilerCtx, buildCtx, tsTypeChecker, null, transformOpts),
       ...afterTransformers,
     ],
     afterDeclarations,
@@ -139,6 +153,15 @@ export function transpileModule(
   const methods = cmp ? cmp.methods : null;
   const method = methods ? methods[0] : null;
   const elementRef = cmp ? cmp.elementRef : null;
+  const watchers = cmp ? cmp.watchers : null;
+  const isMixin = cmp ? moduleFile.isMixin : false;
+  const isExtended = cmp ? moduleFile.isExtended : false;
+  const serializers = cmp ? cmp.serializers : null;
+  const deserializers = cmp ? cmp.deserializers : null;
+
+  if (buildCtx.hasError || buildCtx.hasWarning) {
+    throw new Error(buildCtx.diagnostics[0].messageText as string);
+  }
 
   return {
     buildCtx,
@@ -147,6 +170,7 @@ export function transpileModule(
     compilerCtx,
     componentClassName,
     declarationOutputText,
+    deserializers,
     diagnostics: buildCtx.diagnostics,
     elementRef,
     event,
@@ -158,11 +182,15 @@ export function transpileModule(
     moduleFile,
     outputText,
     properties,
+    watchers,
     property,
+    serializers,
     state,
     states,
     tagName,
     virtualProperties,
+    isMixin,
+    isExtended,
   };
 }
 

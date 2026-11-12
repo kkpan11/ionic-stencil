@@ -1,5 +1,6 @@
-import { flatOne, normalizePath, sortBy } from '@utils';
+import { flatOne, isGlob, normalizePath, sortBy } from '@utils';
 import { join } from '@utils';
+import { minimatch } from 'minimatch';
 import { basename, dirname, relative } from 'path';
 
 import type * as d from '../declarations';
@@ -15,6 +16,7 @@ import {
   DIST_LAZY_LOADER,
   DIST_TYPES,
   DOCS_CUSTOM,
+  DOCS_CUSTOM_ELEMENTS_MANIFEST,
   DOCS_JSON,
   DOCS_README,
   DOCS_VSCODE,
@@ -23,6 +25,81 @@ import {
   VALID_CONFIG_OUTPUT_TARGETS,
   WWW,
 } from './constants';
+
+/**
+ * Checks if a component tag name matches any of the exclude patterns.
+ * Supports glob patterns using minimatch.
+ *
+ * @param tagName The component's tag name to check
+ * @param excludePatterns Array of patterns to match against (supports globs)
+ * @returns true if the component should be excluded, false otherwise
+ */
+export const shouldExcludeComponent = (tagName: string, excludePatterns: string[] | undefined): boolean => {
+  if (!excludePatterns || excludePatterns.length === 0) {
+    return false;
+  }
+
+  return excludePatterns.some((pattern) => {
+    if (isGlob(pattern)) {
+      return minimatch(tagName, pattern);
+    }
+    return pattern === tagName;
+  });
+};
+
+export interface FilterComponentsResult {
+  components: d.ComponentCompilerMeta[];
+  excludedComponents: d.ComponentCompilerMeta[];
+}
+
+/**
+ * Filters out components that match the excludeComponents patterns from the config.
+ * Only applies filtering to production builds (when devMode is false) - dev builds include all components.
+ *
+ * @param components Array of component metadata
+ * @param config The validated Stencil configuration
+ * @returns Object containing filtered components and excluded components
+ */
+export const filterExcludedComponents = (
+  components: d.ComponentCompilerMeta[],
+  config: d.ValidatedConfig,
+): FilterComponentsResult => {
+  // Only apply exclusion logic in production builds (devMode === false)
+  if (config.devMode) {
+    return { components, excludedComponents: [] };
+  }
+
+  const excludePatterns = config.excludeComponents;
+
+  if (!excludePatterns || excludePatterns.length === 0) {
+    return { components, excludedComponents: [] };
+  }
+
+  const excludedComponents: d.ComponentCompilerMeta[] = [];
+  const excludedTags: string[] = [];
+
+  const filtered = components.filter((cmp) => {
+    const shouldExclude = shouldExcludeComponent(cmp.tagName, excludePatterns);
+
+    if (shouldExclude) {
+      excludedComponents.push(cmp);
+      excludedTags.push(cmp.tagName);
+      config.logger.debug(`Excluding component from build: ${cmp.tagName}`);
+    }
+
+    return !shouldExclude;
+  });
+
+  // Log summary of excluded components for production builds
+  if (excludedTags.length > 0) {
+    const tagList = excludedTags.join(', ');
+    config.logger.info(
+      `Excluding ${excludedTags.length} component${excludedTags.length === 1 ? '' : 's'} from production build: ${tagList}`,
+    );
+  }
+
+  return { components: filtered, excludedComponents };
+};
 
 export const relativeImport = (pathFrom: string, pathTo: string, ext?: string, addPrefix = true) => {
   let relativePath = relative(dirname(pathFrom), dirname(pathTo));
@@ -72,8 +149,17 @@ export const isOutputTargetCustom = (o: d.OutputTarget): o is d.OutputTargetCust
 
 export const isOutputTargetDocs = (
   o: d.OutputTarget,
-): o is d.OutputTargetDocsJson | d.OutputTargetDocsReadme | d.OutputTargetDocsVscode | d.OutputTargetDocsCustom =>
-  o.type === DOCS_README || o.type === DOCS_JSON || o.type === DOCS_CUSTOM || o.type === DOCS_VSCODE;
+): o is
+  | d.OutputTargetDocsJson
+  | d.OutputTargetDocsReadme
+  | d.OutputTargetDocsVscode
+  | d.OutputTargetDocsCustom
+  | d.OutputTargetDocsCustomElementsManifest =>
+  o.type === DOCS_README ||
+  o.type === DOCS_JSON ||
+  o.type === DOCS_CUSTOM ||
+  o.type === DOCS_VSCODE ||
+  o.type === DOCS_CUSTOM_ELEMENTS_MANIFEST;
 
 export const isOutputTargetDocsReadme = (o: d.OutputTarget): o is d.OutputTargetDocsReadme => o.type === DOCS_README;
 
@@ -82,6 +168,10 @@ export const isOutputTargetDocsJson = (o: d.OutputTarget): o is d.OutputTargetDo
 export const isOutputTargetDocsCustom = (o: d.OutputTarget): o is d.OutputTargetDocsCustom => o.type === DOCS_CUSTOM;
 
 export const isOutputTargetDocsVscode = (o: d.OutputTarget): o is d.OutputTargetDocsVscode => o.type === DOCS_VSCODE;
+
+export const isOutputTargetDocsCustomElementsManifest = (
+  o: d.OutputTarget,
+): o is d.OutputTargetDocsCustomElementsManifest => o.type === DOCS_CUSTOM_ELEMENTS_MANIFEST;
 
 export const isOutputTargetWww = (o: d.OutputTarget): o is d.OutputTargetWww => o.type === WWW;
 
@@ -103,7 +193,7 @@ export const isEligiblePrimaryPackageOutputTarget = (o: d.OutputTarget): o is d.
   isOutputTargetDistTypes(o);
 
 /**
- * Retrieve the Stencil component compiler metadata from a collection of Stencil {@link Module}s
+ * Retrieve the Stencil component compiler metadata from a collection of Stencil {@link d.Module}s
  * @param moduleFiles the collection of `Module`s to retrieve the metadata from
  * @returns the metadata, lexicographically sorted by the tag names of the components
  */

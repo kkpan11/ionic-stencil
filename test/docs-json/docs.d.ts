@@ -38,6 +38,17 @@ interface ComponentCompilerTypeReference {
    * An ID for this type which is unique within a Stencil project.
    */
   id: string;
+  /**
+   * Whether this type was imported as a default import (e.g., `import MyEnum from './my-enum'`)
+   * vs a named import (e.g., `import { MyType } from './my-type'`)
+   */
+  isDefault?: boolean;
+  /**
+   * The name used in the import statement (before any user-defined alias).
+   * For `import { XAxisOption as moo }`, this would be "XAxisOption".
+   * This is the name exported by the source module.
+   */
+  referenceLocation?: string;
 }
 interface ComponentCompilerReferencedType {
   /**
@@ -197,6 +208,10 @@ export interface JsonDocsComponent {
    */
   parts: JsonDocsPart[];
   /**
+   * Array of custom states defined via @AttachInternals({ states: {...} })
+   */
+  customStates: JsonDocsCustomState[];
+  /**
    * Array of metadata describing where the current component is used
    */
   dependents: string[];
@@ -316,6 +331,14 @@ export interface JsonDocsProp {
    * ```
    */
   required: boolean;
+  /**
+   * `true` if the prop has a `get()`. `false` otherwise
+   */
+  getter: boolean;
+  /**
+   * `true` if the prop has a `set()`. `false` otherwise
+   */
+  setter: boolean;
 }
 export interface JsonDocsMethod {
   name: string;
@@ -347,10 +370,26 @@ export interface JsonDocsEvent {
   deprecation?: string;
   detail: string;
 }
+/**
+ * Type describing a CSS Style, as described by a JSDoc-style comment
+ */
 export interface JsonDocsStyle {
+  /**
+   * The name of the style
+   */
   name: string;
+  /**
+   * The type/description associated with the style
+   */
   docs: string;
+  /**
+   * The annotation used in the JSDoc of the style (e.g. `@prop`)
+   */
   annotation: string;
+  /**
+   * The mode associated with the style
+   */
+  mode: string | undefined;
 }
 export interface JsonDocsListener {
   event: string;
@@ -389,10 +428,50 @@ export interface JsonDocsPart {
    */
   docs: string;
 }
-export interface StyleDoc {
+/**
+ * A descriptor for a Custom State defined via @AttachInternals({ states: {...} })
+ *
+ * Custom states are exposed via the ElementInternals.states CustomStateSet
+ * and can be targeted with the CSS `:state()` pseudo-class.
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/CustomStateSet
+ */
+export interface JsonDocsCustomState {
+  /**
+   * The name of the custom state (without dashes)
+   */
   name: string;
+  /**
+   * The initial/default value of the state
+   */
+  initialValue: boolean;
+  /**
+   * A textual description of the custom state
+   */
   docs: string;
+}
+/**
+ * Represents a parsed block comment in a CSS, Sass, etc. file for a custom property.
+ */
+export interface StyleDoc {
+  /**
+   * The name of the CSS property
+   */
+  name: string;
+  /**
+   * The user-defined description of the CSS property
+   */
+  docs: string;
+  /**
+   * The JSDoc-style annotation (e.g. `@prop`) that was used in the block comment to detect the comment.
+   * Used to inform Stencil where the start of a new property's description starts (and where the previous description
+   * ends).
+   */
   annotation: "prop";
+  /**
+   * The Stencil style-mode that is associated with this property.
+   */
+  mode: string | undefined;
 }
 
 export {};

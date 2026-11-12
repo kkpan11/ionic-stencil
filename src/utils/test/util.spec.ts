@@ -1,6 +1,7 @@
 import { mockBuildCtx, mockValidatedConfig } from '@stencil/core/testing';
 import * as util from '@utils';
 
+import { getTextDocs } from '@utils';
 import type * as d from '../../declarations';
 import { stubDiagnostic } from '../../dev-server/test/Diagnostic.stub';
 
@@ -160,7 +161,7 @@ describe('util', () => {
       const expectedDiagnostic: d.Diagnostic = stubDiagnostic({
         absFilePath: mockPackageJsonPath,
         header: 'Error Parsing JSON',
-        messageText: expect.stringMatching(/.*in JSON at position 13$/),
+        messageText: expect.stringMatching(/.*in JSON at position 13/),
         type: 'build',
       });
 
@@ -233,5 +234,137 @@ interface Foo extends Components.Foo, HTMLStencilElement {`);
         expect(util.addDocBlock(str, docs)).toEqual(str);
       },
     );
+  });
+
+  describe('isTsFile', () => {
+    it.each(['.ts', 'foo.ts', 'foo.bar.ts', 'foo/bar.ts'])(
+      'returns true for a file ending with .ts (%s)',
+      (fileName) => {
+        expect(util.isTsFile(fileName)).toEqual(true);
+      },
+    );
+
+    it.each(['.tsx', 'foo.tsx', 'foo.bar.tsx', 'foo/bar.tsx'])(
+      'returns false for a file ending with .tsx (%s)',
+      (fileName) => {
+        expect(util.isTsFile(fileName)).toEqual(false);
+      },
+    );
+
+    it.each(['foo.js', 'foo.doc', 'foo.css', 'foo.html'])(
+      'returns false for other a file with another extension (%s)',
+      (fileName) => {
+        expect(util.isTsFile(fileName)).toEqual(false);
+      },
+    );
+
+    it('returns false for .d.ts and .d.tsx files', () => {
+      expect(util.isTsFile('foo/bar.d.ts')).toEqual(false);
+      expect(util.isTsFile('foo/bar.d.tsx')).toEqual(false);
+    });
+
+    it('returns true for a file named "spec.ts"', () => {
+      expect(util.isTsFile('spec.ts')).toEqual(true);
+    });
+
+    it('returns true for a file named "d.ts"', () => {
+      expect(util.isTsFile('d.ts')).toEqual(true);
+    });
+
+    it.each(['foo.tS', 'foo.Ts', 'foo.TS'])('returns true for non-lowercase extensions (%s)', (fileName) => {
+      expect(util.isTsFile(fileName)).toEqual(true);
+    });
+  });
+
+  describe('isJsFile', () => {
+    it.each(['.js', 'foo.js', 'foo.bar.js', 'foo/bar.js'])(
+      'returns true for a file ending with .js (%s)',
+      (fileName) => {
+        expect(util.isJsFile(fileName)).toEqual(true);
+      },
+    );
+
+    it.each(['.jsx', 'foo.txt', 'foo/bar.css', 'foo.bar.html'])(
+      'returns false for other a file with another extension (%s)',
+      (fileName) => {
+        expect(util.isJsFile(fileName)).toEqual(false);
+      },
+    );
+
+    it('returns true for a file named "spec.js"', () => {
+      expect(util.isJsFile('spec.js')).toEqual(true);
+    });
+
+    it.each(['foo.jS', 'foo.Js', 'foo.JS'])('returns true for non-lowercase extensions (%s)', (fileName) => {
+      expect(util.isJsFile(fileName)).toEqual(true);
+    });
+  });
+
+  describe('getTextDocs', () => {
+    let docs: d.CompilerJsDoc;
+
+    beforeEach(() => {
+      docs = {
+        tags: [],
+        text: '',
+      };
+    });
+    it('returns empty string for null or undefined', () => {
+      expect(getTextDocs(null)).toBe('');
+      expect(getTextDocs(undefined)).toBe('');
+    });
+
+    it('returns only main text if no tags', () => {
+      docs = {
+        text: 'Some doc text.',
+        tags: [],
+      };
+      expect(getTextDocs(docs)).toBe('Some doc text.');
+    });
+
+    it('replaces line breaks in main text with spaces', () => {
+      docs = {
+        text: 'Line 1\nLine 2\r\nLine 3',
+        tags: [],
+      };
+      expect(getTextDocs(docs)).toBe('Line 1 Line 2 Line 3');
+    });
+
+    it('filters out internal tags and escapes "*/" in text and tags', () => {
+      docs = {
+        text: 'This text ends with */ sequence.',
+        tags: [
+          { name: 'internal', text: 'should be removed' },
+          { name: 'default', text: "'*/*'" },
+          { name: 'deprecated', text: 'Use something else' },
+        ],
+      };
+
+      const result = getTextDocs(docs);
+
+      // Should replace "*/" with "*\/" (single backslash)
+      expect(result).toContain('This text ends with *\\/ sequence.');
+
+      // @internal tag filtered out
+      expect(result).not.toContain('@internal');
+
+      // @default and @deprecated tags included and escaped
+      expect(result).toContain("@default '*\\/*'");
+      expect(result).toContain('@deprecated Use something else');
+
+      // Main text and tags separated by new lines
+      const lines = result.split('\n');
+      expect(lines[0]).toBe('This text ends with *\\/ sequence.');
+      expect(lines).toContain("@default '*\\/*'");
+      expect(lines).toContain('@deprecated Use something else');
+    });
+
+    it('trims the result', () => {
+      docs = {
+        text: '  Some text with spaces  ',
+        tags: [],
+      };
+      expect(getTextDocs(docs)).toBe('Some text with spaces');
+    });
   });
 });

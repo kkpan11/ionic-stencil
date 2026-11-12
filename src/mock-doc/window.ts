@@ -3,6 +3,7 @@ import { createConsole } from './console';
 import { MockCustomElementRegistry } from './custom-element-registry';
 import { MockDocument, resetDocument } from './document';
 import { MockDocumentFragment } from './document-fragment';
+import { MockSVGElement } from './element';
 import {
   addEventListener,
   dispatchEvent,
@@ -21,19 +22,21 @@ import { MockLocation } from './location';
 import { MockNavigator } from './navigator';
 import { MockElement, MockHTMLElement, MockNode, MockNodeList } from './node';
 import { MockPerformance, resetPerformance } from './performance';
+import { MockResizeObserver } from './resize-observer';
+import { MockShadowRoot } from './shadow-root';
 import { MockStorage } from './storage';
 
-const nativeClearInterval = clearInterval;
-const nativeClearTimeout = clearTimeout;
-const nativeSetInterval = setInterval;
-const nativeSetTimeout = setTimeout;
-const nativeURL = URL;
+const nativeClearInterval = globalThis.clearInterval;
+const nativeClearTimeout = globalThis.clearTimeout;
+const nativeSetInterval = globalThis.setInterval;
+const nativeSetTimeout = globalThis.setTimeout;
+const nativeURL = globalThis.URL;
+const nativeWindow = globalThis.window;
 
 export class MockWindow {
   __timeouts: Set<any>;
   __history: MockHistory;
   __elementCstr: any;
-  __htmlElementCstr: any;
   __charDataCstr: any;
   __docTypeCstr: any;
   __docCstr: any;
@@ -72,12 +75,12 @@ export class MockWindow {
   scrollY: number;
 
   // event handlers
-  CustomEvent: typeof MockCustomEvent;
-  Event: typeof MockEvent;
-  Headers: typeof MockHeaders;
-  FocusEvent: typeof MockFocusEvent;
-  KeyboardEvent: typeof MockKeyboardEvent;
-  MouseEvent: typeof MockMouseEvent;
+  declare CustomEvent: typeof MockCustomEvent;
+  declare Event: typeof MockEvent;
+  declare Headers: typeof MockHeaders;
+  declare FocusEvent: typeof MockFocusEvent;
+  declare KeyboardEvent: typeof MockKeyboardEvent;
+  declare MouseEvent: typeof MockMouseEvent;
 
   constructor(html: string | boolean = null) {
     if (html !== false) {
@@ -109,11 +112,11 @@ export class MockWindow {
   }
 
   cancelAnimationFrame(id: any) {
-    this.__clearTimeout(id);
+    this.__clearTimeout.call(nativeWindow || this, id);
   }
 
   cancelIdleCallback(id: any) {
-    this.__clearTimeout(id);
+    this.__clearTimeout.call(nativeWindow || this, id);
   }
 
   get CharacterData() {
@@ -133,11 +136,11 @@ export class MockWindow {
   }
 
   clearInterval(id: any) {
-    this.__clearInterval(id);
+    this.__clearInterval.call(nativeWindow || this, id);
   }
 
   clearTimeout(id: any) {
-    this.__clearTimeout(id);
+    this.__clearTimeout.call(nativeWindow || this, id);
   }
 
   close() {
@@ -186,6 +189,10 @@ export class MockWindow {
     this.__docFragCstr = docFragCstr;
   }
 
+  get ShadowRoot() {
+    return MockShadowRoot;
+  }
+
   get DocumentType() {
     if (this.__docTypeCstr == null) {
       const ownerDocument = this.document;
@@ -217,16 +224,7 @@ export class MockWindow {
   }
 
   get Element() {
-    if (this.__elementCstr == null) {
-      const ownerDocument = this.document;
-      this.__elementCstr = class extends MockElement {
-        constructor() {
-          super(ownerDocument, '');
-          throw new Error('Illegal constructor: cannot construct Element');
-        }
-      };
-    }
-    return this.__elementCstr;
+    return MockElement;
   }
 
   fetch(input: any, init?: any): any {
@@ -282,32 +280,19 @@ export class MockWindow {
   }
 
   get HTMLElement() {
-    if (this.__htmlElementCstr == null) {
-      const ownerDocument = this.document;
-      this.__htmlElementCstr = class extends MockHTMLElement {
-        constructor() {
-          super(ownerDocument, '');
-
-          const observedAttributes = (this.constructor as any).observedAttributes;
-          if (Array.isArray(observedAttributes) && typeof (this as any).attributeChangedCallback === 'function') {
-            observedAttributes.forEach((attrName) => {
-              const attrValue = this.getAttribute(attrName);
-              if (attrValue != null) {
-                (this as any).attributeChangedCallback(attrName, null, attrValue);
-              }
-            });
-          }
-        }
-      };
-    }
-    return this.__htmlElementCstr;
+    return MockHTMLElement;
   }
-  set HTMLElement(htmlElementCstr: any) {
-    this.__htmlElementCstr = htmlElementCstr;
+
+  get SVGElement() {
+    return MockSVGElement;
   }
 
   get IntersectionObserver() {
     return MockIntersectionObserver;
+  }
+
+  get ResizeObserver() {
+    return MockResizeObserver;
   }
 
   get localStorage() {
@@ -351,16 +336,7 @@ export class MockWindow {
   }
 
   get Node() {
-    if (this.__nodeCstr == null) {
-      const ownerDocument = this.document;
-      this.__nodeCstr = class extends MockNode {
-        constructor() {
-          super(ownerDocument, 0, 'test', '');
-          throw new Error('Illegal constructor: cannot construct Node');
-        }
-      };
-    }
-    return this.__nodeCstr;
+    return MockNode;
   }
 
   get NodeList() {
@@ -452,7 +428,7 @@ export class MockWindow {
       this.__timeouts = new Set();
     }
 
-    ms = Math.min(ms, this.__maxTimeout);
+    ms = Math.min(ms ?? 0, this.__maxTimeout);
 
     if (this.__allowInterval) {
       const intervalId = this.__setInterval(() => {
@@ -478,21 +454,25 @@ export class MockWindow {
       return intervalId;
     }
 
-    const timeoutId = this.__setTimeout(() => {
-      if (this.__timeouts) {
-        this.__timeouts.delete(timeoutId);
+    const timeoutId = this.__setTimeout.call(
+      nativeWindow || this,
+      () => {
+        if (this.__timeouts) {
+          this.__timeouts.delete(timeoutId);
 
-        try {
-          callback(...args);
-        } catch (e) {
-          if (this.console) {
-            this.console.error(e);
-          } else {
-            console.error(e);
+          try {
+            callback(...args);
+          } catch (e) {
+            if (this.console) {
+              this.console.error(e);
+            } else {
+              console.error(e);
+            }
           }
         }
-      }
-    }, ms) as any;
+      },
+      ms,
+    ) as any;
 
     if (this.__timeouts) {
       this.__timeouts.add(timeoutId);
@@ -506,23 +486,27 @@ export class MockWindow {
       this.__timeouts = new Set();
     }
 
-    ms = Math.min(ms, this.__maxTimeout);
+    ms = Math.min(ms ?? 0, this.__maxTimeout);
 
-    const timeoutId = this.__setTimeout(() => {
-      if (this.__timeouts) {
-        this.__timeouts.delete(timeoutId);
+    const timeoutId = this.__setTimeout.call(
+      nativeWindow || this,
+      () => {
+        if (this.__timeouts) {
+          this.__timeouts.delete(timeoutId);
 
-        try {
-          callback(...args);
-        } catch (e) {
-          if (this.console) {
-            this.console.error(e);
-          } else {
-            console.error(e);
+          try {
+            callback(...args);
+          } catch (e) {
+            if (this.console) {
+              this.console.error(e);
+            } else {
+              console.error(e);
+            }
           }
         }
-      }
-    }, ms) as any as number;
+      },
+      ms,
+    ) as any as number;
 
     if (this.__timeouts) {
       this.__timeouts.add(timeoutId);
@@ -812,7 +796,7 @@ function resetWindowDefaults(win: MockWindow) {
   win.__clearTimeout = nativeClearTimeout;
   win.__setInterval = nativeSetInterval;
   win.__setTimeout = nativeSetTimeout;
-  win.__maxTimeout = 30000;
+  win.__maxTimeout = 60000;
   win.__allowInterval = true;
   win.URL = nativeURL;
 }
@@ -844,12 +828,12 @@ export function cloneWindow(srcWin: Window, opts: { customElementProxy?: boolean
 }
 
 export function cloneDocument(srcDoc: Document) {
-  if (srcDoc == null) {
+  if (srcDoc == null || !srcDoc.defaultView) {
     return null;
   }
 
   const dstWin = cloneWindow(srcDoc.defaultView);
-  return dstWin.document;
+  return dstWin?.document || null;
 }
 
 // TODO(STENCIL-345) - Evaluate reconciling MockWindow, Window differences
@@ -894,12 +878,16 @@ function resetWindow(win: MockWindow) {
       } catch (e) {}
     }
 
-    // ensure we don't hold onto nodeFetch values
-    (win as any).fetch = null;
-    (win as any).Headers = null;
-    (win as any).Request = null;
-    (win as any).Response = null;
-    (win as any).FetchError = null;
+    // ensure we don't hold onto nodeFetch values; fail loudly instead of a
+    // bare null-deref if anything still touches the window after this point
+    const windowDestroyed = () => {
+      throw new Error('MockWindow was already destroyed');
+    };
+    (win as any).fetch = windowDestroyed;
+    (win as any).Headers = windowDestroyed;
+    (win as any).Request = windowDestroyed;
+    (win as any).Response = windowDestroyed;
+    (win as any).FetchError = windowDestroyed;
   }
 }
 

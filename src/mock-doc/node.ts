@@ -1,5 +1,4 @@
 import { createAttributeProxy, MockAttr, MockAttributeMap } from './attribute';
-import { MockClassList } from './class-list';
 import { NODE_NAMES, NODE_TYPES } from './constants';
 import { createCSSStyleDeclaration, MockCSSStyleDeclaration } from './css-style-declaration';
 import { attributeChanged, checkAttributeChanged, connectNode, disconnectNode } from './custom-element-registry';
@@ -15,6 +14,7 @@ import {
 import { parseFragmentUtil } from './parse-util';
 import { matches, selectAll, selectOne } from './selector';
 import { NON_ESCAPABLE_CONTENT, serializeNodeToHtml, SerializeNodeToHtmlOptions } from './serialize-node';
+import { MockTokenList } from './token-list';
 
 export class MockNode {
   private _nodeValue: string | null;
@@ -22,7 +22,7 @@ export class MockNode {
   nodeType: number;
   ownerDocument: any;
   parentNode: MockNode | null;
-  childNodes: MockNode[];
+  private _childNodes: MockNode[] = [];
 
   constructor(ownerDocument: any, nodeType: number, nodeName: string | null, nodeValue: string | null) {
     this.ownerDocument = ownerDocument;
@@ -30,7 +30,13 @@ export class MockNode {
     this.nodeName = nodeName;
     this._nodeValue = nodeValue;
     this.parentNode = null;
-    this.childNodes = [];
+  }
+
+  get childNodes(): MockNode[] {
+    return this._childNodes;
+  }
+  set childNodes(value: MockNode[]) {
+    this._childNodes = value;
   }
 
   appendChild(newNode: MockNode) {
@@ -59,9 +65,7 @@ export class MockNode {
     const firstChild = this.firstChild;
     items.forEach((item) => {
       const isNode = typeof item === 'object' && item !== null && 'nodeType' in item;
-      if (firstChild) {
-        this.insertBefore(isNode ? item : this.ownerDocument.createTextNode(String(item)), firstChild);
-      }
+      this.insertBefore(isNode ? item : this.ownerDocument.createTextNode(String(item)), firstChild);
     });
   }
 
@@ -79,7 +83,7 @@ export class MockNode {
     return this.childNodes[0] || null;
   }
 
-  insertBefore(newNode: MockNode, referenceNode: MockNode) {
+  insertBefore(newNode: MockNode, referenceNode: MockNode | null) {
     if (newNode.nodeType === NODE_TYPES.DOCUMENT_FRAGMENT_NODE) {
       for (let i = 0, ii = newNode.childNodes.length; i < ii; i++) {
         insertBefore(this, newNode.childNodes[i], referenceNode);
@@ -182,7 +186,7 @@ export class MockNode {
 
   remove() {
     if (this.parentNode != null) {
-      this.parentNode.removeChild(this);
+      (this as any).__parentNode ? (this as any).__parentNode.removeChild(this) : this.parentNode.removeChild(this);
     }
   }
 
@@ -200,6 +204,18 @@ export class MockNode {
   }
   set textContent(value: string) {
     this._nodeValue = String(value);
+  }
+
+  addEventListener(type: string, handler: (ev?: any) => void) {
+    addEventListener(this, type, handler);
+  }
+
+  removeEventListener(type: string, handler: any) {
+    removeEventListener(this, type, handler);
+  }
+
+  dispatchEvent(ev: MockEvent) {
+    return dispatchEvent(this, ev);
   }
 
   static ELEMENT_NODE = 1;
@@ -223,7 +239,21 @@ export class MockNodeList {
   }
 }
 
-type MockElementInternals = Record<keyof ElementInternals, null>;
+/**
+ * Just enough of `ElementInternals` for form-associated components to run without throwing.
+ * There is no form, validation or accessibility tree to update, so the methods do nothing.
+ */
+class MockElementInternals {
+  states = new Set<string>();
+  setFormValue() {}
+  setValidity() {}
+  checkValidity() {
+    return true;
+  }
+  reportValidity() {
+    return true;
+  }
+}
 
 export class MockElement extends MockNode {
   __namespaceURI: string | null;
@@ -232,14 +262,7 @@ export class MockElement extends MockNode {
   __style: MockCSSStyleDeclaration | null | undefined;
 
   attachInternals(): MockElementInternals {
-    return new Proxy({} as unknown as MockElementInternals, {
-      get: function (_target, prop, _receiver) {
-        console.error(
-          `NOTE: Property ${String(prop)} was accessed on ElementInternals, but this property is not implemented.
-Testing components with ElementInternals is fully supported in e2e tests.`,
-        );
-      },
-    });
+    return new MockElementInternals();
   }
 
   constructor(ownerDocument: any, nodeName: string | null, namespaceURI: string | null = null) {
@@ -249,21 +272,33 @@ Testing components with ElementInternals is fully supported in e2e tests.`,
     this.__attributeMap = null;
   }
 
-  addEventListener(type: string, handler: (ev?: any) => void) {
+  override addEventListener(type: string, handler: (ev?: any) => void) {
     addEventListener(this, type, handler);
   }
 
   attachShadow(_opts: ShadowRootInit) {
     const shadowRoot = this.ownerDocument.createDocumentFragment();
+    shadowRoot.delegatesFocus = _opts.delegatesFocus ?? false;
     this.shadowRoot = shadowRoot;
     return shadowRoot;
   }
 
   blur() {
-    dispatchEvent(
-      this,
-      new MockFocusEvent('blur', { relatedTarget: null, bubbles: true, cancelable: true, composed: true }),
-    );
+    // Prevent infinite recursion when blur event handlers call blur()
+    // on the same element while it's already processing a blur event
+    if (isCurrentlyDispatching(this, 'blur')) {
+      return;
+    }
+
+    markAsDispatching(this, 'blur');
+    try {
+      dispatchEvent(
+        this,
+        new MockFocusEvent('blur', { relatedTarget: null, bubbles: true, cancelable: true, composed: true }),
+      );
+    } finally {
+      unmarkAsDispatching(this, 'blur');
+    }
   }
 
   get localName() {
@@ -287,11 +322,25 @@ Testing components with ElementInternals is fully supported in e2e tests.`,
     return this.__shadowRoot || null;
   }
 
+  /**
+   * Set shadow root for element
+   * @param shadowRoot - ShadowRoot to set
+   */
   set shadowRoot(shadowRoot: any) {
     if (shadowRoot != null) {
       shadowRoot.host = this;
       this.__shadowRoot = shadowRoot;
     } else {
+      /**
+       * There are use cases where we want to render a component with `shadow: true` as
+       * a scoped component. In this case, we don't want to have a shadow root attached
+       * to the element. This is why we need to be able to remove the shadow root.
+       *
+       * For example:
+       * calling `renderToString('<my-component></my-component>', {
+       *   serializeShadowRoot: 'scoped'
+       * })`
+       */
       delete this.__shadowRoot;
     }
   }
@@ -325,7 +374,15 @@ Testing components with ElementInternals is fully supported in e2e tests.`,
   }
 
   get classList() {
-    return new MockClassList(this as any);
+    return new MockTokenList(this as any, 'class');
+  }
+
+  get part() {
+    return new MockTokenList(this as any, 'part');
+  }
+
+  set part(value: string | MockTokenList) {
+    this.setAttributeNS(null, 'part', String(value));
   }
 
   click() {
@@ -360,7 +417,7 @@ Testing components with ElementInternals is fully supported in e2e tests.`,
     this.setAttributeNS(null, 'dir', value);
   }
 
-  dispatchEvent(ev: MockEvent) {
+  override dispatchEvent(ev: MockEvent) {
     return dispatchEvent(this, ev);
   }
 
@@ -481,13 +538,13 @@ Testing components with ElementInternals is fully supported in e2e tests.`,
   }
 
   insertAdjacentElement(position: 'beforebegin' | 'afterbegin' | 'beforeend' | 'afterend', elm: MockHTMLElement) {
-    if (position === 'beforebegin') {
+    if (position === 'beforebegin' && this.parentNode) {
       insertBefore(this.parentNode, elm, this);
     } else if (position === 'afterbegin') {
       this.prepend(elm);
     } else if (position === 'beforeend') {
       this.appendChild(elm);
-    } else if (position === 'afterend') {
+    } else if (position === 'afterend' && this.parentNode) {
       insertBefore(this.parentNode, elm, this.nextSibling);
     }
     return elm;
@@ -497,7 +554,9 @@ Testing components with ElementInternals is fully supported in e2e tests.`,
     const frag = parseFragmentUtil(this.ownerDocument, html);
     if (position === 'beforebegin') {
       while (frag.childNodes.length > 0) {
-        insertBefore(this.parentNode, frag.childNodes[0], this);
+        if (this.parentNode) {
+          insertBefore(this.parentNode, frag.childNodes[0], this);
+        }
       }
     } else if (position === 'afterbegin') {
       while (frag.childNodes.length > 0) {
@@ -509,20 +568,22 @@ Testing components with ElementInternals is fully supported in e2e tests.`,
       }
     } else if (position === 'afterend') {
       while (frag.childNodes.length > 0) {
-        insertBefore(this.parentNode, frag.childNodes[frag.childNodes.length - 1], this.nextSibling);
+        if (this.parentNode) {
+          insertBefore(this.parentNode, frag.childNodes[frag.childNodes.length - 1], this.nextSibling);
+        }
       }
     }
   }
 
   insertAdjacentText(position: 'beforebegin' | 'afterbegin' | 'beforeend' | 'afterend', text: string) {
     const elm = this.ownerDocument.createTextNode(text);
-    if (position === 'beforebegin') {
+    if (position === 'beforebegin' && this.parentNode) {
       insertBefore(this.parentNode, elm, this);
     } else if (position === 'afterbegin') {
       this.prepend(elm);
     } else if (position === 'beforeend') {
       this.appendChild(elm);
-    } else if (position === 'afterend') {
+    } else if (position === 'afterend' && this.parentNode) {
       insertBefore(this.parentNode, elm, this.nextSibling);
     }
   }
@@ -541,8 +602,10 @@ Testing components with ElementInternals is fully supported in e2e tests.`,
   get hidden() {
     return this.hasAttributeNS(null, 'hidden');
   }
-  set hidden(isHidden: boolean) {
-    if (isHidden === true) {
+  set hidden(isHidden: boolean | 'until-found') {
+    if (isHidden === 'until-found') {
+      this.setAttributeNS(null, 'hidden', 'until-found');
+    } else if (isHidden === true) {
       this.setAttributeNS(null, 'hidden', '');
     } else {
       this.removeAttributeNS(null, 'hidden');
@@ -651,7 +714,7 @@ Testing components with ElementInternals is fully supported in e2e tests.`,
     }
   }
 
-  removeEventListener(type: string, handler: any) {
+  override removeEventListener(type: string, handler: any) {
     removeEventListener(this, type, handler);
   }
 
@@ -1077,7 +1140,7 @@ export function resetElement(elm: MockElement) {
   delete elm.__style;
 }
 
-function insertBefore(parentNode: MockNode, newNode: MockNode, referenceNode: MockNode) {
+function insertBefore(parentNode: MockNode, newNode: MockNode, referenceNode: MockNode | null) {
   if (newNode !== referenceNode) {
     newNode.remove();
     newNode.parentNode = parentNode;
@@ -1103,7 +1166,7 @@ function insertBefore(parentNode: MockNode, newNode: MockNode, referenceNode: Mo
 export class MockHTMLElement extends MockElement {
   override __namespaceURI = 'http://www.w3.org/1999/xhtml';
 
-  constructor(ownerDocument: any, nodeName: string) {
+  constructor(ownerDocument: any, nodeName: string | null) {
     super(ownerDocument, typeof nodeName === 'string' ? nodeName.toUpperCase() : null);
   }
 
@@ -1197,4 +1260,44 @@ function setTextContent(elm: MockElement, text: string) {
   }
   const textNode = new MockTextNode(elm.ownerDocument, text);
   elm.appendChild(textNode);
+}
+
+// Track currently dispatching events to prevent infinite recursion
+const currentlyDispatching = new WeakMap<any, Set<string>>();
+
+/**
+ * @param target - The element that is currently dispatching an event.
+ * @param eventType - The type of event that is currently dispatching.
+ * @returns True if the element is currently dispatching the event, false otherwise.
+ */
+export function isCurrentlyDispatching(target: any, eventType: string): boolean {
+  const dispatchingEvents = currentlyDispatching.get(target);
+  return dispatchingEvents != null && dispatchingEvents.has(eventType);
+}
+
+/**
+ * @param target - The element that is currently dispatching an event.
+ * @param eventType - The type of event that is currently dispatching.
+ */
+export function markAsDispatching(target: any, eventType: string): void {
+  let dispatchingEvents = currentlyDispatching.get(target);
+  if (dispatchingEvents == null) {
+    dispatchingEvents = new Set<string>();
+    currentlyDispatching.set(target, dispatchingEvents);
+  }
+  dispatchingEvents.add(eventType);
+}
+
+/**
+ * @param target - The element that is currently dispatching an event.
+ * @param eventType - The type of event that is currently dispatching.
+ */
+export function unmarkAsDispatching(target: any, eventType: string): void {
+  const dispatchingEvents = currentlyDispatching.get(target);
+  if (dispatchingEvents != null) {
+    dispatchingEvents.delete(eventType);
+    if (dispatchingEvents.size === 0) {
+      currentlyDispatching.delete(target);
+    }
+  }
 }

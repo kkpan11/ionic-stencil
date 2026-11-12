@@ -1,6 +1,6 @@
 import ts from 'typescript';
 
-import { STENCIL_CORE_ID } from '../bundle/entry-alias-ids';
+import { STENCIL_CORE_ID, STENCIL_JSX_DEV_RUNTIME_ID, STENCIL_JSX_RUNTIME_ID } from '../bundle/entry-alias-ids';
 
 export const updateStencilCoreImports = (updatedCoreImportPath: string): ts.TransformerFactory<ts.SourceFile> => {
   return () => {
@@ -15,7 +15,24 @@ export const updateStencilCoreImports = (updatedCoreImportPath: string): ts.Tran
       tsSourceFile.statements.forEach((s) => {
         if (ts.isImportDeclaration(s)) {
           if (s.moduleSpecifier != null && ts.isStringLiteral(s.moduleSpecifier)) {
-            if (s.moduleSpecifier.text === STENCIL_CORE_ID) {
+            const moduleSpecifierText = s.moduleSpecifier.text;
+
+            // Handle @stencil/core/jsx-runtime and @stencil/core/jsx-dev-runtime imports
+            if (moduleSpecifierText === STENCIL_JSX_RUNTIME_ID || moduleSpecifierText === STENCIL_JSX_DEV_RUNTIME_ID) {
+              // Rewrite to import from the updated core import path
+              const newImport = ts.factory.updateImportDeclaration(
+                s,
+                s.modifiers,
+                s.importClause,
+                ts.factory.createStringLiteral(updatedCoreImportPath),
+                s.attributes,
+              );
+              newStatements.push(newImport);
+              madeChanges = true;
+              return;
+            }
+
+            if (moduleSpecifierText === STENCIL_CORE_ID) {
               if (
                 s.importClause &&
                 s.importClause.namedBindings &&
@@ -89,4 +106,11 @@ const KEEP_IMPORTS = new Set([
   'getRenderingRef',
   'forceModeUpdate',
   'setErrorHandler',
+  'setTagTransformer',
+  'transformTag',
+  'Mixin',
+  'jsx',
+  'jsxs',
+  'jsxDEV',
+  'render',
 ]);

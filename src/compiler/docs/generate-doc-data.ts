@@ -1,4 +1,13 @@
-import { flatOne, isOutputTargetDocsJson, join, normalizePath, relative, sortBy, unique } from '@utils';
+import {
+  DEFAULT_STYLE_MODE,
+  flatOne,
+  isOutputTargetDocsJson,
+  join,
+  normalizePath,
+  relative,
+  sortBy,
+  unique,
+} from '@utils';
 import { basename, dirname } from 'path';
 
 import type * as d from '../../declarations';
@@ -107,8 +116,9 @@ const getDocsComponents = async (
           methods: getDocsMethods(cmp.methods),
           events: getDocsEvents(cmp.events),
           styles: getDocsStyles(cmp),
-          slots: getDocsSlots(cmp.docs.tags),
+          slots: getDocsSlots(cmp.htmlSlots, cmp.docs.tags),
           parts: getDocsParts(cmp.htmlParts, cmp.docs.tags),
+          customStates: getDocsCustomStates(cmp),
           listeners: getDocsListeners(cmp.listeners),
         }));
     }),
@@ -125,8 +135,8 @@ const buildDocsDepGraph = (
   function walk(tagName: string): void {
     if (!dependencies[tagName]) {
       const cmp = cmps.find((c) => c.tagName === tagName);
-      const deps = cmp.directDependencies;
-      if (deps.length > 0) {
+      const deps = cmp?.directDependencies;
+      if (deps?.length > 0) {
         dependencies[tagName] = deps;
         deps.forEach(walk);
       }
@@ -195,6 +205,9 @@ const getRealProperties = (properties: d.ComponentCompilerProperty[]): d.JsonDoc
 
       optional: member.optional,
       required: member.required,
+
+      getter: member.getter,
+      setter: member.setter,
     }));
 };
 
@@ -204,21 +217,26 @@ const getRealProperties = (properties: d.ComponentCompilerProperty[]): d.JsonDoc
  * @returns the derived metadata
  */
 const getVirtualProperties = (virtualProps: d.ComponentCompilerVirtualProperty[]): d.JsonDocsProp[] => {
-  return virtualProps.map((member) => ({
-    name: member.name,
-    type: member.type,
-    mutable: false,
-    attr: member.name,
-    reflectToAttr: false,
-    docs: member.docs,
-    docsTags: [],
-    default: undefined,
-    deprecation: undefined,
-    values: parseTypeIntoValues(member.type),
+  return virtualProps.map(
+    (member): d.JsonDocsProp => ({
+      name: member.name,
+      type: member.type,
+      mutable: false,
+      attr: member.name,
+      reflectToAttr: false,
+      docs: member.docs,
+      docsTags: [],
+      default: undefined,
+      deprecation: undefined,
+      values: parseTypeIntoValues(member.type),
 
-    optional: true,
-    required: false,
-  }));
+      optional: true,
+      required: false,
+
+      getter: undefined,
+      setter: undefined,
+    }),
+  );
 };
 
 const parseTypeIntoValues = (type: string): d.JsonDocsValue[] => {
@@ -305,16 +323,26 @@ const getDocsEvents = (events: d.ComponentCompilerEvent[]): d.JsonDocsEvent[] =>
     }));
 };
 
-const getDocsStyles = (cmpMeta: d.ComponentCompilerMeta): d.JsonDocsStyle[] => {
+/**
+ * Transforms the {@link d.CompilerStyleDoc} metadata for a component into a {@link d.JsonDocsStyle}, providing sensible
+ * defaults where needed.
+ * @param cmpMeta the metadata for a single Stencil component, which contains the compiler style metadata
+ * @returns a new series containing a {@link d.JsonDocsStyle} entry for each {@link d.CompilerStyleDoc} entry.
+ */
+export const getDocsStyles = (cmpMeta: d.ComponentCompilerMeta): d.JsonDocsStyle[] => {
   if (!cmpMeta.styleDocs) {
     return [];
   }
 
-  return sortBy(cmpMeta.styleDocs, (o) => o.name.toLowerCase()).map((styleDoc) => {
+  return sortBy(
+    cmpMeta.styleDocs,
+    (compilerStyleDoc) => `${compilerStyleDoc.name.toLowerCase()},${compilerStyleDoc.mode.toLowerCase()}}`,
+  ).map((compilerStyleDoc) => {
     return {
-      name: styleDoc.name,
-      annotation: styleDoc.annotation || '',
-      docs: styleDoc.docs || '',
+      name: compilerStyleDoc.name,
+      annotation: compilerStyleDoc.annotation || '',
+      docs: compilerStyleDoc.docs || '',
+      mode: compilerStyleDoc.mode && compilerStyleDoc.mode !== DEFAULT_STYLE_MODE ? compilerStyleDoc.mode : undefined,
     };
   });
 };
@@ -342,9 +370,13 @@ const getDocsDeprecationText = (tags: d.JsonDocsTag[]): string | undefined => {
   return undefined;
 };
 
-const getDocsSlots = (tags: d.JsonDocsTag[]): d.JsonDocsSlot[] => {
+const DEFAULT_SLOT_DOCS = 'The default slot';
+
+export const getDocsSlots = (vdom: string[], tags: d.JsonDocsTag[]): d.JsonDocsSlot[] => {
+  const docsSlots = getNameText('slot', tags).map(([name, docs]) => ({ name, docs }));
+  const vdomSlots = vdom.map((name) => ({ name, docs: name === '' ? DEFAULT_SLOT_DOCS : '' }));
   return sortBy(
-    getNameText('slot', tags).map(([name, docs]) => ({ name, docs })),
+    unique([...docsSlots, ...vdomSlots], (s) => s.name),
     (a) => a.name,
   );
 };
@@ -355,6 +387,27 @@ const getDocsParts = (vdom: string[], tags: d.JsonDocsTag[]): d.JsonDocsSlot[] =
   return sortBy(
     unique([...docsParts, ...vdomParts], (p) => p.name),
     (p) => p.name,
+  );
+};
+
+/**
+ * Extract custom states documentation from component metadata
+ *
+ * @param cmpMeta the component metadata to extract custom states from
+ * @returns array of custom state documentation objects
+ */
+const getDocsCustomStates = (cmpMeta: d.ComponentCompilerMeta): d.JsonDocsCustomState[] => {
+  if (!cmpMeta.attachInternalsCustomStates || cmpMeta.attachInternalsCustomStates.length === 0) {
+    return [];
+  }
+
+  return sortBy(
+    cmpMeta.attachInternalsCustomStates.map((state) => ({
+      name: state.name,
+      initialValue: state.initialValue,
+      docs: state.docs || '',
+    })),
+    (state) => state.name,
   );
 };
 

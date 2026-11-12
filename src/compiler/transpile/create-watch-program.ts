@@ -24,7 +24,6 @@ export const createTsWatchProgram = async (
   let isRunning = false;
   let lastTsBuilder: any;
   let timeoutId: any;
-  let rebuildTimer: any;
 
   // Get the pre-baked TS options we want to use for our builder program
   const optionsToExtend = getTsOptionsToExtend(config);
@@ -44,19 +43,18 @@ export const createTsWatchProgram = async (
      * @returns A {@link NodeJs.Timer} instance
      */
     setTimeout(callback, time) {
-      clearInterval(rebuildTimer);
-      const t = (timeoutId = setInterval(() => {
+      clearTimeout(timeoutId);
+      const delay = config.sys.watchTimeout || time;
+      const tick = () => {
         if (!isRunning) {
           callback();
-          clearInterval(t);
-          timeoutId = rebuildTimer = null;
+          timeoutId = null;
+        } else {
+          timeoutId = setTimeout(tick, delay);
         }
-      }, config.sys.watchTimeout || time));
-      return t;
-    },
-
-    clearTimeout(id) {
-      return clearInterval(id);
+      };
+      timeoutId = setTimeout(tick, delay);
+      return timeoutId;
     },
   };
 
@@ -82,6 +80,15 @@ export const createTsWatchProgram = async (
     (reportWatchStatus) => {
       config.logger.debug(reportWatchStatus.messageText);
     },
+    // We don't want to allow users to mess with the watch method, so
+    // we only strip out the excludeFiles and excludeDirectories properties
+    // to allow the user to still have control over which files get excluded from the watcher
+    config.tsWatchOptions
+      ? {
+          excludeFiles: config.tsWatchOptions.excludeFiles,
+          excludeDirectories: config.tsWatchOptions.excludeDirectories,
+        }
+      : undefined,
   );
 
   // Add a callback that will execute whenever a new instance
@@ -102,8 +109,8 @@ export const createTsWatchProgram = async (
     // This will be called via a callback on the watch build whenever a file
     // change is detected
     rebuild: () => {
-      if (lastTsBuilder && !timeoutId) {
-        rebuildTimer = tsWatchSys.setTimeout(() => tsWatchHost.afterProgramCreate(lastTsBuilder), 300);
+      if (lastTsBuilder) {
+        tsWatchSys.setTimeout(() => tsWatchHost.afterProgramCreate(lastTsBuilder), 300);
       }
     },
   };

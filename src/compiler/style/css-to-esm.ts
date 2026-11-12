@@ -9,6 +9,9 @@ import { optimizeCss } from '../optimize/optimize-css';
 import { serializeImportPath } from '../transformers/stencil-import-path';
 import { getScopeId } from './scope-css';
 import { stripCssComments } from './style-utils';
+import { addTagTransformToCssString } from '../transformers/transform-utils';
+import { TRANSFORM_TAG } from '../transformers/core-runtime-apis';
+import { STENCIL_CORE_ID } from '../bundle/entry-alias-ids';
 
 /**
  * A regular expression for matching CSS import statements
@@ -107,17 +110,15 @@ const transformCssToEsmModule = (input: d.TransformCssToEsmInput): d.TransformCs
   };
 
   if (input.docs) {
-    parseStyleDocs(results.styleDocs, input.input);
+    parseStyleDocs(results.styleDocs, input.input, input.mode);
   }
 
   try {
     const varNames = new Set([results.defaultVarName]);
 
-    if (isString(input.tag)) {
-      if (input.encapsulation === 'scoped' || (input.encapsulation === 'shadow' && input.commentOriginalSelector)) {
-        const scopeId = getScopeId(input.tag, input.mode);
-        results.styleText = scopeCss(results.styleText, scopeId, !!input.commentOriginalSelector);
-      }
+    if (isString(input.tag) && input.encapsulation === 'scoped') {
+      const scopeId = getScopeId(input.tag, input.mode);
+      results.styleText = scopeCss(results.styleText, scopeId, false);
     }
 
     const cssImports = getCssToEsmImports(varNames, results.styleText, input.file, input.mode);
@@ -132,6 +133,7 @@ const transformCssToEsmModule = (input: d.TransformCssToEsmInput): d.TransformCs
           tag: input.tag,
           encapsulation: input.encapsulation,
           mode: input.mode,
+          isNodeModule: cssImport.isNodeModule,
         },
         input.styleImportData,
       );
@@ -163,33 +165,68 @@ const generateTransformCssToEsm = (
 ): d.TransformCssToEsmOutput => {
   const s = new MagicString('');
 
+  // Escape backslashes first so the escape sequences added below are not
+  // re-escaped afterwards. Escaping backslashes last would turn the
+  // escaped backtick produced below back into an unescaped backtick,
+  // which terminates the generated template literal early.
+  // Then replace literal newlines/tabs/returns with spaces, keep control
+  // characters visible as escape sequences in the runtime CSS string,
+  // and escape the remaining characters that have a special meaning
+  // inside a template literal (backticks and dollar-brace).
+  results.styleText = results.styleText
+    .replace(/\\/g, '\\\\')
+    .replace(/\n/g, ' ')
+    .replace(/\r/g, ' ')
+    .replace(/\t/g, ' ')
+    .replace(/\u000c/g, '\\\\f')
+    .replace(/\u0008/g, '\\\\b')
+    .replace(/\u000b/g, '\\\\v')
+    .replace(/\0/g, '\\\\0')
+    .replace(/`/g, '\\`')
+    .replace(/\$\{/g, '\\${');
+
+  if (input.addTagTransformers) {
+    results.styleText = addTagTransformToCssString(results.styleText, input.tags);
+  }
+
+  // Strip CSS comments before embedding in template literal
+  // This includes /** */ and /*! */ comments (Sass loud comments)
+  // Note: Style docs have already been parsed in transformCssToEsmModule
+  results.styleText = stripCssComments(results.styleText);
+
   if (input.module === 'cjs') {
     // CommonJS
+    if (input.addTagTransformers) {
+      s.append(`const ${TRANSFORM_TAG} = require('${STENCIL_CORE_ID}').transformTag;\n`);
+    }
     results.imports.forEach((cssImport) => {
       s.append(`const ${cssImport.varName} = require('${cssImport.importPath}');\n`);
     });
 
-    s.append(`const ${results.defaultVarName} = `);
+    s.append(`const ${results.defaultVarName} = () => `);
 
     results.imports.forEach((cssImport) => {
       s.append(`${cssImport.varName} + `);
     });
 
-    s.append(`${JSON.stringify(results.styleText)};\n`);
+    s.append(`\`${results.styleText}\`;\n`);
     s.append(`module.exports = ${results.defaultVarName};`);
   } else {
     // ESM
+    if (input.addTagTransformers) {
+      s.append(`import { transformTag as ${TRANSFORM_TAG}  } from '${STENCIL_CORE_ID}';\n`);
+    }
     results.imports.forEach((cssImport) => {
       s.append(`import ${cssImport.varName} from '${cssImport.importPath}';\n`);
     });
 
-    s.append(`const ${results.defaultVarName} = `);
+    s.append(`const ${results.defaultVarName} = () => `);
 
     results.imports.forEach((cssImport) => {
       s.append(`${cssImport.varName} + `);
     });
 
-    s.append(`${JSON.stringify(results.styleText)};\n`);
+    s.append(`\`${results.styleText}\`;\n`);
     s.append(`export default ${results.defaultVarName};`);
   }
 
@@ -230,14 +267,17 @@ const getCssToEsmImports = (
       url: r[4].replace(/[\"\'\)]/g, ''),
       filePath: null,
       varName: null,
+      isNodeModule: false,
     };
 
     if (!isLocalCssImport(cssImportData.srcImportText)) {
       // do nothing for @import url(http://external.css)
       continue;
     } else if (isCssNodeModule(cssImportData.url)) {
-      // do not resolve this path cuz it starts with node resolve id ~
-      continue;
+      // Node module import with ~ prefix
+      // Strip the ~ and use the path as-is for module resolution
+      cssImportData.filePath = cssImportData.url.substring(1);
+      cssImportData.isNodeModule = true;
     } else if (path.isAbsolute(cssImportData.url)) {
       // absolute path already
       cssImportData.filePath = normalizePath(cssImportData.url);

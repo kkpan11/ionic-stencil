@@ -1,9 +1,10 @@
-import { Config } from '../../internal';
-import builtins from 'rollup-plugin-node-builtins';
-import linaria from 'linaria/rollup';
-import css from 'rollup-plugin-css-only';
 import { reactOutputTarget } from '@stencil/react-output-target';
+import linaria from 'linaria/rollup';
 import path from 'path';
+import css from 'rollup-plugin-css-only';
+import builtins from 'rollup-plugin-node-builtins';
+
+import { Config } from '../../internal';
 
 export const config: Config = {
   namespace: 'EndToEnd',
@@ -27,7 +28,6 @@ export const config: Config = {
   outputTargets: [
     {
       type: 'www',
-      empty: false,
       serviceWorker: null,
     },
     {
@@ -39,6 +39,10 @@ export const config: Config = {
     {
       type: 'docs-json',
       file: 'docs.json',
+    },
+    {
+      type: 'docs-custom-elements-manifest',
+      file: 'custom-elements-manifest.json',
     },
     reactOutputTarget({
       componentCorePackage: '@stencil/e2e-react-output-target',
@@ -56,8 +60,10 @@ export const config: Config = {
     foo: 'bar',
     HOST: 'example.com',
   },
-  enableCache: false,
   hashFileNames: false,
   buildEs5: 'prod',
   sourceMap: true,
+  extras: {
+    experimentalSlotFixes: true,
+  },
 };

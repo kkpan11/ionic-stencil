@@ -174,4 +174,188 @@ describe('watch', () => {
     await waitForChanges();
     expect(root).toEqualHtml(`<cmp-a>3 5 5</cmp-a>`);
   });
+
+  it('correctly calls watch when @Prop uses `set()', async () => {
+    @Component({ tag: 'cmp-a' })
+    class CmpA {
+      method1Called = 0;
+
+      private _prop1 = 1;
+      @Prop()
+      get prop1() {
+        return this._prop1;
+      }
+      set prop1(newProp: number) {
+        if (isNaN(newProp)) return;
+        this._prop1 = newProp;
+      }
+
+      @Watch('prop1')
+      method1() {
+        this.method1Called++;
+      }
+
+      componentDidLoad() {
+        expect(this.method1Called).toBe(0);
+        expect(this.prop1).toBe(1);
+      }
+    }
+
+    const { root, rootInstance } = await newSpecPage({
+      components: [CmpA],
+      html: `<cmp-a></cmp-a>`,
+    });
+    jest.spyOn(rootInstance, 'method1');
+
+    // set same values, watch should not be called
+    root.prop1 = 1;
+    expect(rootInstance.method1).toHaveBeenCalledTimes(0);
+
+    // set different values
+    root.prop1 = 100;
+    expect(rootInstance.method1).toHaveBeenCalledTimes(1);
+    expect(rootInstance.method1).toHaveBeenLastCalledWith(100, 1, 'prop1');
+
+    // guard has prevented the watch from being called
+    root.prop1 = 'bye';
+    expect(root.prop1).toBe(100);
+    expect(rootInstance.method1).toHaveBeenCalledTimes(1);
+    expect(rootInstance.method1).toHaveBeenLastCalledWith(100, 1, 'prop1');
+  });
+
+  it('can immediately call watch method with default value', async () => {
+    const called: number[] = [];
+    @Component({ tag: 'cmp-a' })
+    class CmpA {
+      @Prop() prop1 = 1;
+
+      @Watch('prop1', { immediate: true })
+      methodImmediate(incomingValue: number) {
+        called.push(incomingValue);
+      }
+    }
+
+    const { root, waitForChanges } = await newSpecPage({
+      components: [CmpA],
+      html: `<cmp-a></cmp-a>`,
+    });
+    await waitForChanges();
+    expect(called.length).toBe(1);
+    expect(called[0]).toBe(1);
+
+    // set same values, watch should not be called
+    root.prop1 = 1;
+    expect(called.length).toBe(1);
+
+    // // set different values
+    root.prop1 = 100;
+    await waitForChanges();
+    expect(called.length).toBe(2);
+    expect(called[1]).toBe(100);
+  });
+
+  it('fires watch callbacks when the component was compiled with the legacy pre-4.39.x watcher format', async () => {
+    // Prior to Stencil 4.39.x (PR #6484), the compiler emitted watcher handlers
+    // as a plain string array: { "min": ["minChanged"] }.
+    // The new format wraps each entry in an object with flags: { "min": [{ "minChanged": 0 }] }.
+    // This test verifies backward compatibility when a library (e.g. Ionic) was compiled
+    // with an old compiler but runs against a new Stencil runtime.
+    const watchCalls: Array<[unknown, unknown, string]> = [];
+
+    @Component({ tag: 'cmp-legacy-watch' })
+    class CmpLegacyWatch {
+      @Prop() min = 0;
+
+      // No @Watch decorator here — the watch is wired via the legacy static metadata below
+      minChanged(newVal: number, oldVal: number, propName: string) {
+        watchCalls.push([newVal, oldVal, propName]);
+      }
+
+      render() {
+        return null;
+      }
+    }
+
+    // Simulate what a pre-4.39.x Stencil compiler emits: string[] instead of { [method]: flags }[]
+    (CmpLegacyWatch as any).watchers = { min: ['minChanged'] };
+
+    const { root } = await newSpecPage({
+      components: [CmpLegacyWatch],
+      html: `<cmp-legacy-watch></cmp-legacy-watch>`,
+    });
+
+    root.min = 42;
+    expect(watchCalls).toHaveLength(1);
+    expect(watchCalls[0]).toEqual([42, 0, 'min']);
+
+    root.min = 100;
+    expect(watchCalls).toHaveLength(2);
+    expect(watchCalls[1]).toEqual([100, 42, 'min']);
+
+    // Same value — watcher must NOT fire
+    root.min = 100;
+    expect(watchCalls).toHaveLength(2);
+  });
+
+  it('can immediately call watch method with incoming attribute value', async () => {
+    const called: number[] = [];
+    @Component({ tag: 'cmp-a' })
+    class CmpA {
+      @Prop() prop1 = 1;
+
+      @Watch('prop1', { immediate: true })
+      methodImmediate(incomingValue: number) {
+        called.push(incomingValue);
+      }
+    }
+
+    const { root, waitForChanges } = await newSpecPage({
+      components: [CmpA],
+      html: `<cmp-a prop-1="2"></cmp-a>`,
+    });
+    await waitForChanges();
+    expect(called.length).toBe(1);
+    expect(called[0]).toBe(2);
+
+    // set same values, watch should not be called
+    root.prop1 = 2;
+    expect(called.length).toBe(1);
+
+    // // set different values
+    root.prop1 = 100;
+    await waitForChanges();
+    expect(called.length).toBe(2);
+    expect(called[1]).toBe(100);
+  });
+
+  it('does not throw when a watched native attribute changes before the lazy instance exists', async () => {
+    const calls: string[] = [];
+    @Component({ tag: 'cmp-a' })
+    class CmpA {
+      @Watch('aria-label')
+      ariaLabelChanged(newValue: string) {
+        calls.push(newValue);
+      }
+    }
+
+    const { doc, waitForChanges } = await newSpecPage({
+      components: [CmpA],
+      html: ``,
+    });
+
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const el = doc.createElement('cmp-a');
+      doc.body.appendChild(el);
+      // the component's module hasn't loaded yet, so there is no instance to call the watcher on
+      el.setAttribute('aria-label', 'before load');
+      expect(errorSpy).not.toHaveBeenCalled();
+
+      await waitForChanges();
+      el.setAttribute('aria-label', 'after load');
+      expect(calls).toEqual(['after load']);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 });

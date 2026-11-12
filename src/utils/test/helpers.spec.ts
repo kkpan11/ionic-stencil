@@ -1,36 +1,6 @@
-import { dashToPascalCase, isDef, isPromise, mergeIntoWith, toCamelCase, toDashCase } from '../helpers';
+import { dashToPascalCase, escapeWithPattern, isDef, mergeIntoWith, toCamelCase, toDashCase } from '../helpers';
 
 describe('util helpers', () => {
-  describe('isPromise', () => {
-    it('is promise', () => {
-      const asyncFn = async () => 42;
-      const someFn = () => {};
-      someFn.then = () => {};
-      expect(isPromise(Promise.resolve())).toBe(true);
-      expect(isPromise(new Promise(() => {}))).toBe(true);
-      expect(isPromise(asyncFn())).toBe(true);
-      expect(isPromise({ then: function () {} })).toBe(true);
-      expect(isPromise(someFn)).toBe(true);
-    });
-
-    it('not promise', () => {
-      expect(isPromise('')).toBe(false);
-      expect(isPromise('then')).toBe(false);
-      expect(isPromise(true)).toBe(false);
-      expect(isPromise(false)).toBe(false);
-      expect(isPromise({})).toBe(false);
-      expect(isPromise({ then: true })).toBe(false);
-      expect(isPromise([])).toBe(false);
-      expect(isPromise([true])).toBe(false);
-      expect(isPromise(() => {})).toBe(false);
-      expect(isPromise(null)).toBe(false);
-      expect(isPromise(undefined)).toBe(false);
-      expect(isPromise(0)).toBe(false);
-      expect(isPromise(-88)).toBe(false);
-      expect(isPromise(88)).toBe(false);
-    });
-  });
-
   describe('dashToPascalCase', () => {
     it('my-3d-component => My3dComponent', () => {
       expect(dashToPascalCase('my-3d-component')).toBe('My3dComponent');
@@ -135,6 +105,65 @@ describe('util helpers', () => {
         { id: 'fab' },
         { id: 'fib' },
       ]);
+    });
+  });
+
+  describe('escapeWithPattern', () => {
+    it('replaces all occurrences of a string pattern by default', () => {
+      const text = 'foo/bar foo/bar foo/bar';
+      const pattern = '/';
+      const replacement = '\\/';
+      expect(escapeWithPattern(text, pattern, replacement)).toBe('foo\\/bar foo\\/bar foo\\/bar');
+    });
+
+    it('replaces only first occurrence if replaceAll is false', () => {
+      const text = 'foo/bar foo/bar foo/bar';
+      const pattern = '/';
+      const replacement = '\\/';
+      expect(escapeWithPattern(text, pattern, replacement, false)).toBe('foo\\/bar foo/bar foo/bar');
+    });
+
+    it('replaces all occurrences using a RegExp pattern with no g flag by default', () => {
+      const text = 'a+b+c+a+b+c';
+      const pattern = /\+/; // no 'g' flag
+      const replacement = '-';
+      expect(escapeWithPattern(text, pattern, replacement)).toBe('a-b-c-a-b-c');
+    });
+
+    it('replaces only first occurrence if replaceAll is false with RegExp', () => {
+      const text = 'a+b+c+a+b+c';
+      const pattern = /\+/;
+      const replacement = '-';
+      expect(escapeWithPattern(text, pattern, replacement, false)).toBe('a-b+c+a+b+c');
+    });
+
+    it('respects the g flag if RegExp already has it and replaceAll true', () => {
+      const text = 'x*y*z*x*y*z';
+      const pattern = /\*/g;
+      const replacement = '-';
+      expect(escapeWithPattern(text, pattern, replacement, true)).toBe('x-y-z-x-y-z');
+    });
+
+    it('removes the g flag if replaceAll is false', () => {
+      const text = 'x*y*z*x*y*z';
+      const pattern = /\*/g;
+      const replacement = '-';
+      expect(escapeWithPattern(text, pattern, replacement, false)).toBe('x-y*z*x*y*z');
+    });
+
+    it('escapes special RegExp chars in string pattern', () => {
+      const text = 'foo.*+?^${}()|[]\\bar';
+      const pattern = '.*+?^${}()|[]\\';
+      const replacement = '-ESCAPED-';
+      expect(escapeWithPattern(text, pattern, replacement)).toBe('foo-ESCAPED-bar');
+    });
+
+    it('works with empty string input', () => {
+      expect(escapeWithPattern('', 'a', 'b')).toBe('');
+    });
+
+    it('works with empty replacement', () => {
+      expect(escapeWithPattern('abcabc', 'a', '')).toBe('bcbc');
     });
   });
 });

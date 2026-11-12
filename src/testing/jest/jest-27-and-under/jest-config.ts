@@ -1,4 +1,5 @@
 import type { Config } from '@jest/types';
+import { BOOLEAN_CLI_FLAGS } from '@stencil/core/cli';
 import type * as d from '@stencil/core/internal';
 import { isString } from '@utils';
 
@@ -85,6 +86,12 @@ export function buildJestArgv(config: d.ValidatedConfig): Config.Argv {
     jestArgv.ci = jestArgv.ci === 'true' || jestArgv.ci === '';
   }
 
+  for (const flag of BOOLEAN_CLI_FLAGS) {
+    if (typeof jestArgv[flag] === 'string') {
+      jestArgv[flag] = jestArgv[flag] === 'true';
+    }
+  }
+
   return jestArgv;
 }
 
@@ -145,6 +152,16 @@ export function buildJestConfig(config: d.ValidatedConfig): string {
   }
   if (stencilConfigTesting.verbose) {
     jestConfig.verbose = stencilConfigTesting.verbose;
+  }
+  if (typeof stencilConfigTesting.bail !== 'undefined') {
+    jestConfig.bail =
+      typeof stencilConfigTesting.bail === 'number' ? stencilConfigTesting.bail : stencilConfigTesting.bail ? 1 : 0;
+  }
+  if (stencilConfigTesting.prettierPath) {
+    jestConfig.prettierPath = stencilConfigTesting.prettierPath;
+  }
+  if (stencilConfigTesting.restoreMocks) {
+    jestConfig.restoreMocks = stencilConfigTesting.restoreMocks;
   }
 
   jestConfig.testRunner = new Jest27Stencil().getDefaultJestRunner();

@@ -3,8 +3,8 @@ import { SVG_NS } from '@utils';
 
 import type * as d from '../../../declarations';
 import { h, newVNode } from '../h';
+import { toVNode } from '../util';
 import { patch } from '../vdom-render';
-import { toVNode } from './to-vnode';
 
 describe('renderer', () => {
   let hostElm: any;
@@ -362,6 +362,21 @@ describe('renderer', () => {
           expect(map(inner, hostElm.children)).toEqual(['1', '2', '3']);
           expect(hostElm.children.length).toEqual(3);
           expect(hostElm.children[1].tagName).toEqual('I');
+        });
+
+        it('creates a new element for a reused key that changes tag, without stealing a later sibling', () => {
+          const itemP = (n: number) => h('p', { key: n }, `text ${n}`);
+          const itemDiv = (n: number) => h('div', { key: n }, `box ${n}`);
+
+          const vnode1 = h('div', null, itemP(1), itemP(2), itemP(3), itemP(4), itemP(5));
+          const vnode2 = h('div', null, itemP(1), itemP(3), itemDiv(4), itemP(5));
+
+          patch(vnode0, vnode1);
+          expect(map(inner, hostElm.children)).toEqual(['text 1', 'text 2', 'text 3', 'text 4', 'text 5']);
+
+          patch(vnode1, vnode2);
+          expect(map(inner, hostElm.children)).toEqual(['text 1', 'text 3', 'box 4', 'text 5']);
+          expect(map((c: any) => c.tagName, hostElm.children)).toEqual(['P', 'P', 'DIV', 'P']);
         });
       });
 
@@ -848,6 +863,18 @@ describe('renderer', () => {
     });
   });
 
+  describe('non-VNode complex child (e.g. a Date)', () => {
+    it('does not throw when re-rendering an element whose only child was an invalid value', () => {
+      const vnode1 = h('div', null, new Date('2026-01-15') as any);
+      patch(vnode0, vnode1);
+      expect(hostElm.innerHTML).toBe('');
+
+      const vnode2 = h('div', null, new Date('2026-03-22') as any);
+      expect(() => patch(vnode1, vnode2)).not.toThrow();
+      expect(hostElm.innerHTML).toBe('');
+    });
+  });
+
   function prop(name: any) {
     return function (obj: any) {
       return obj[name];
@@ -861,4 +888,9 @@ describe('renderer', () => {
     }
     return ret;
   }
+
+  it('should normalize undefined $text$ to null in newVNode', () => {
+    const vnode = newVNode(null, undefined as any);
+    expect(vnode.$text$).toBe(null);
+  });
 });

@@ -2,8 +2,16 @@ import { normalizePath } from '@utils';
 import ts from 'typescript';
 
 import type * as d from '../../declarations';
+import { updateLazyComponentConstructor } from './component-lazy/lazy-constructor';
 import { StencilStaticGetter } from './decorators-to-static/decorators-constants';
+import { removeStaticMetaProperties } from './remove-static-meta-properties';
 import { addToLibrary, findTypeWithName, getHomeModule, getOriginalTypeName } from './type-library';
+import { updateComponentClass } from './update-component-class';
+import postcss from 'postcss';
+// @ts-expect-error - including `@types` for postcss-safe-parser breaks Stencil's type build
+import postcssSafeParser from 'postcss-safe-parser';
+import postcssSelectorParser from 'postcss-selector-parser';
+import { TRANSFORM_TAG } from './core-runtime-apis';
 
 export const getScriptTarget = () => {
   // using a fn so the browser compiler doesn't require the global ts for startup
@@ -176,9 +184,12 @@ export const createStaticGetter = (
  * @param staticName the name of the static getter to pull a value from
  * @returns a TypeScript value, converted from its TypeScript syntax tree representation
  */
-export const getStaticValue = (staticMembers: ts.ClassElement[], staticName: StencilStaticGetter): any => {
+export const getStaticValue = (
+  staticMembers: ts.ClassElement[] | ts.NodeArray<ts.ClassElement>,
+  staticName: StencilStaticGetter,
+): any => {
   const staticMember: ts.GetAccessorDeclaration = staticMembers.find(
-    (member) => (member.name as any).escapedText === staticName,
+    (member) => (member.name as any)?.escapedText === staticName,
   ) as any;
   if (!staticMember || !staticMember.body || !staticMember.body.statements) {
     return null;
@@ -278,7 +289,12 @@ export const arrayLiteralToArray = (arr: ts.ArrayLiteralExpression) => {
   });
 };
 
-export const objectLiteralToObjectMap = (objectLiteral: ts.ObjectLiteralExpression) => {
+export const objectLiteralToObjectMap = (
+  objectLiteral: ts.ObjectLiteralExpression,
+  typeChecker?: ts.TypeChecker,
+  diagnostics?: any[],
+  errorNode?: ts.Node,
+) => {
   const properties = objectLiteral.properties;
   const final: ObjectMap = {};
 
@@ -289,57 +305,200 @@ export const objectLiteralToObjectMap = (objectLiteral: ts.ObjectLiteralExpressi
     if (ts.isShorthandPropertyAssignment(propAssignment)) {
       val = getIdentifierValue(propName);
     } else if (ts.isPropertyAssignment(propAssignment)) {
-      switch (propAssignment.initializer.kind) {
-        case ts.SyntaxKind.ArrayLiteralExpression:
-          val = arrayLiteralToArray(propAssignment.initializer as ts.ArrayLiteralExpression);
-          break;
-
-        case ts.SyntaxKind.ObjectLiteralExpression:
-          val = objectLiteralToObjectMap(propAssignment.initializer as ts.ObjectLiteralExpression);
-          break;
-
-        case ts.SyntaxKind.StringLiteral:
-          val = (propAssignment.initializer as ts.StringLiteral).text;
-          break;
-
-        case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
-          val = (propAssignment.initializer as ts.StringLiteral).text;
-          break;
-
-        case ts.SyntaxKind.TrueKeyword:
-          val = true;
-          break;
-
-        case ts.SyntaxKind.FalseKeyword:
-          val = false;
-          break;
-
-        case ts.SyntaxKind.Identifier:
-          const escapedText = (propAssignment.initializer as ts.Identifier).escapedText;
-          if (escapedText === 'String') {
-            val = String;
-          } else if (escapedText === 'Number') {
-            val = Number;
-          } else if (escapedText === 'Boolean') {
-            val = Boolean;
-          } else if (escapedText === 'undefined') {
-            val = undefined;
-          } else if (escapedText === 'null') {
-            val = null;
-          } else {
-            val = getIdentifierValue((propAssignment.initializer as ts.Identifier).escapedText);
-          }
-          break;
-
-        case ts.SyntaxKind.PropertyAccessExpression:
-        default:
+      // Check if the initializer is a resolveVar() call
+      if (
+        ts.isCallExpression(propAssignment.initializer) &&
+        typeChecker &&
+        ((ts.isIdentifier(propAssignment.initializer.expression) &&
+          propAssignment.initializer.expression.text === 'resolveVar') ||
+          (ts.isPropertyAccessExpression(propAssignment.initializer.expression) &&
+            ts.isIdentifier(propAssignment.initializer.expression.name) &&
+            propAssignment.initializer.expression.name.text === 'resolveVar'))
+      ) {
+        // Import resolveVariableValue from decorator-utils
+        // For now, we'll handle it inline to avoid circular dependencies
+        if (propAssignment.initializer.arguments.length === 1) {
+          val = resolveVarInObjectLiteral(
+            propAssignment.initializer.arguments[0],
+            typeChecker,
+            diagnostics,
+            propAssignment.initializer,
+          );
+        } else {
           val = propAssignment.initializer;
+        }
+      } else {
+        switch (propAssignment.initializer.kind) {
+          case ts.SyntaxKind.ArrayLiteralExpression:
+            val = arrayLiteralToArray(propAssignment.initializer as ts.ArrayLiteralExpression);
+            break;
+
+          case ts.SyntaxKind.ObjectLiteralExpression:
+            val = objectLiteralToObjectMap(
+              propAssignment.initializer as ts.ObjectLiteralExpression,
+              typeChecker,
+              diagnostics,
+              errorNode,
+            );
+            break;
+
+          case ts.SyntaxKind.StringLiteral:
+            val = (propAssignment.initializer as ts.StringLiteral).text;
+            break;
+
+          case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+            val = (propAssignment.initializer as ts.StringLiteral).text;
+            break;
+
+          case ts.SyntaxKind.TrueKeyword:
+            val = true;
+            break;
+
+          case ts.SyntaxKind.FalseKeyword:
+            val = false;
+            break;
+
+          case ts.SyntaxKind.Identifier:
+            const escapedText = (propAssignment.initializer as ts.Identifier).escapedText;
+            if (escapedText === 'String') {
+              val = String;
+            } else if (escapedText === 'Number') {
+              val = Number;
+            } else if (escapedText === 'Boolean') {
+              val = Boolean;
+            } else if (escapedText === 'undefined') {
+              val = undefined;
+            } else if (escapedText === 'null') {
+              val = null;
+            } else {
+              val = getIdentifierValue((propAssignment.initializer as ts.Identifier).escapedText);
+            }
+            break;
+
+          case ts.SyntaxKind.PropertyAccessExpression:
+          default:
+            val = propAssignment.initializer;
+        }
       }
     }
     final[propName] = val;
   }
 
   return final;
+};
+
+/**
+ * Resolves a resolveVar() call within an object literal.
+ * This is a simplified version that handles the same cases as resolveVariableValue in decorator-utils.
+ */
+const resolveVarInObjectLiteral = (
+  node: ts.Expression,
+  typeChecker: ts.TypeChecker,
+  _diagnostics?: any[],
+  _errorNode?: ts.Node,
+): string => {
+  // Handle identifiers (const variables)
+  if (ts.isIdentifier(node)) {
+    let symbol = typeChecker.getSymbolAtLocation(node);
+    if (symbol && symbol.flags & ts.SymbolFlags.Alias) {
+      // Follow the import chain (e.g. `import { FOO } from './constants'`)
+      symbol = typeChecker.getAliasedSymbol(symbol);
+    }
+    if (!symbol || !symbol.valueDeclaration) {
+      throw new Error(
+        `resolveVar() cannot resolve the value of "${node.text}" at compile time. Only const variables and object properties with string literal values are supported.`,
+      );
+    }
+
+    const declaration = symbol.valueDeclaration;
+
+    if (ts.isVariableDeclaration(declaration)) {
+      const type = typeChecker.getTypeAtLocation(node);
+      if (type && type.isLiteral() && typeof type.value === 'string') {
+        return type.value;
+      }
+
+      if (declaration.initializer) {
+        const value = extractStringFromExpressionInline(declaration.initializer, typeChecker);
+        if (value !== null) {
+          return value;
+        }
+      }
+    }
+
+    throw new Error(
+      `resolveVar() cannot resolve the value of "${node.text}" at compile time. Only const variables and object properties with string literal values are supported.`,
+    );
+  }
+
+  // Handle property access expressions (object properties)
+  if (ts.isPropertyAccessExpression(node)) {
+    const objectType = typeChecker.getTypeAtLocation(node.expression);
+    if (!objectType) {
+      throw new Error(`resolveVar() cannot resolve the object type for "${node.getText()}" at compile time.`);
+    }
+
+    const propertyName = node.name.text;
+    const property = typeChecker.getPropertyOfType(objectType, propertyName);
+    if (!property) {
+      throw new Error(
+        `resolveVar() cannot find property "${propertyName}" on object "${node.expression.getText()}" at compile time.`,
+      );
+    }
+
+    const propertyType = typeChecker.getTypeOfSymbolAtLocation(property, node);
+    if (propertyType && propertyType.isLiteral() && typeof propertyType.value === 'string') {
+      return propertyType.value;
+    }
+
+    if (property.valueDeclaration) {
+      if (ts.isPropertyDeclaration(property.valueDeclaration)) {
+        const initializer = property.valueDeclaration.initializer;
+        if (initializer) {
+          const value = extractStringFromExpressionInline(initializer, typeChecker);
+          if (value !== null) {
+            return value;
+          }
+        }
+      } else if (ts.isPropertySignature(property.valueDeclaration)) {
+        // PropertySignature doesn't have initializer, skip it
+        // The type-based resolution above should handle this case
+      } else if (ts.isVariableDeclaration(property.valueDeclaration)) {
+        const initializer = property.valueDeclaration.initializer;
+        if (initializer) {
+          const value = extractStringFromExpressionInline(initializer, typeChecker);
+          if (value !== null) {
+            return value;
+          }
+        }
+      }
+    }
+
+    throw new Error(
+      `resolveVar() cannot resolve the value of "${node.getText()}" at compile time. Only const variables and object properties with string literal values are supported.`,
+    );
+  }
+
+  throw new Error(
+    `resolveVar() can only be used with const variables or object properties. "${node.getText()}" is not supported.`,
+  );
+};
+
+const extractStringFromExpressionInline = (expr: ts.Expression, typeChecker: ts.TypeChecker): string | null => {
+  if (ts.isStringLiteral(expr)) {
+    return expr.text;
+  }
+
+  if (ts.isNoSubstitutionTemplateLiteral(expr)) {
+    return expr.text;
+  }
+
+  const type = typeChecker.getTypeAtLocation(expr);
+  if (type && type.isLiteral() && typeof type.value === 'string') {
+    return type.value;
+  }
+
+  return null;
 };
 
 const getIdentifierValue = (escapedText: any) => {
@@ -414,6 +573,16 @@ interface TypeReferenceIR {
 }
 
 /**
+ * Resolve a TypeScript alias to its original symbol.
+ *
+ * @param checker a TypeScript type checker
+ * @param symbol the symbol to resolve, if one was found
+ * @returns the original symbol for an alias, the provided symbol otherwise, or `undefined`
+ */
+export const resolveAliasedSymbol = (checker: ts.TypeChecker, symbol: ts.Symbol | undefined): ts.Symbol | undefined =>
+  symbol && (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol) : symbol;
+
+/**
  * Recursively walks the provided AST to collect all TypeScript type references that are found
  *
  * @param checker a {@link ts.TypeChecker} instance
@@ -447,6 +616,18 @@ export const getAllTypeReferences = (checker: ts.TypeChecker, node: ts.Node): Re
               });
             }
           });
+      }
+    } else if (ts.isTypeQueryNode(node) && ts.isIdentifier(node.exprName)) {
+      const referencedSymbol = resolveAliasedSymbol(checker, checker.getSymbolAtLocation(node.exprName));
+      const isEnumOrClass = referencedSymbol?.declarations?.some(
+        (declaration) => ts.isEnumDeclaration(declaration) || ts.isClassDeclaration(declaration),
+      );
+
+      if (isEnumOrClass) {
+        referencedTypes.push({
+          name: getEntityName(node.exprName),
+          type: checker.getTypeAtLocation(node.exprName),
+        });
       }
     }
     return ts.forEachChild(node, visit);
@@ -509,53 +690,120 @@ const getTypeReferenceLocation = (
     const importHomeModule = getHomeModule(sourceFile, localImportPath, options, compilerHost, program);
 
     if (importHomeModule) {
-      const importName = namedImportBindings.elements.find((nbe) => nbe.name.getText() === typeName).name;
+      const importElement = namedImportBindings.elements.find((nbe) => nbe.name.getText() === typeName);
+      const importName = importElement.name;
       const originalTypeName = getOriginalTypeName(importName, checker);
 
-      const typeDecl = findTypeWithName(importHomeModule, originalTypeName);
-      type = checker.getTypeAtLocation(typeDecl);
+      // Get the name as it appears in the import statement (before any user alias)
+      // For "import { XAxisOption as moo }", propertyName is "XAxisOption"
+      const importedAs = importElement.propertyName ? importElement.propertyName.getText() : typeName;
 
-      const id = addToLibrary(type, originalTypeName, checker, normalizePath(importHomeModule.fileName, false));
+      const importedSymbol = resolveAliasedSymbol(checker, checker.getSymbolAtLocation(importName));
+      const declaration = importedSymbol?.valueDeclaration ?? importedSymbol?.declarations?.[0];
+      const enumOrClassDeclaration =
+        declaration && (ts.isClassDeclaration(declaration) || ts.isEnumDeclaration(declaration))
+          ? declaration
+          : undefined;
+      if (importedSymbol && enumOrClassDeclaration) {
+        type = checker.getTypeOfSymbolAtLocation(importedSymbol, enumOrClassDeclaration);
+      } else {
+        const typeDecl = findTypeWithName(importHomeModule, originalTypeName);
+        if (typeDecl) {
+          type = checker.getTypeAtLocation(typeDecl);
+        }
+      }
+
+      const typeSourceFile = enumOrClassDeclaration?.getSourceFile() ?? importHomeModule;
+      const id = addToLibrary(
+        type,
+        originalTypeName,
+        checker,
+        normalizePath(typeSourceFile.fileName, false),
+        importedSymbol,
+      );
       return {
         location: 'import',
         path: localImportPath,
         id,
+        referenceLocation: importedAs,
       };
     }
   }
 
   // Loop through all top level exports to find if any reference to the type for 'local' reference location
-  const isExported = sourceFile.statements.some((st) => {
-    const statementModifiers = retrieveTsModifiers(st);
+  const localExport = sourceFile.statements.reduce<{ isDefault?: boolean; referenceLocation?: string } | undefined>(
+    (exportInfo, st) => {
+      if (exportInfo) {
+        return exportInfo;
+      }
 
-    const isDeclarationExported = (statement: ts.InterfaceDeclaration | ts.TypeAliasDeclaration | ts.EnumDeclaration) =>
-      (<ts.Identifier>statement.name).getText() === typeName &&
-      Array.isArray(statementModifiers) &&
-      statementModifiers.some((mod) => mod.kind === ts.SyntaxKind.ExportKeyword);
+      if (
+        ts.isExportAssignment(st) &&
+        !st.isExportEquals &&
+        ts.isIdentifier(st.expression) &&
+        st.expression.getText() === typeName
+      ) {
+        // `export default TypeName`
+        return { isDefault: true };
+      }
 
-    // Is the interface defined in the file and exported
-    const isInterfaceDeclarationExported = ts.isInterfaceDeclaration(st) && isDeclarationExported(st);
+      if (ts.isExportDeclaration(st) && !st.moduleSpecifier && ts.isNamedExports(st.exportClause)) {
+        // `export { TypeName }`, including renamed and default exports
+        const exportSpecifier = st.exportClause.elements.find(
+          (element) => (element.propertyName ?? element.name).getText() === typeName,
+        );
+        if (exportSpecifier) {
+          const exportedName = exportSpecifier.name.getText();
+          return exportedName === 'default'
+            ? { isDefault: true }
+            : { referenceLocation: exportedName === typeName ? undefined : exportedName };
+        }
+      }
 
-    const isTypeAliasDeclarationExported = ts.isTypeAliasDeclaration(st) && isDeclarationExported(st);
+      const statementModifiers = retrieveTsModifiers(st);
 
-    const isEnumDeclarationExported = ts.isEnumDeclaration(st) && isDeclarationExported(st);
+      const isDeclarationExported = (
+        statement: ts.InterfaceDeclaration | ts.TypeAliasDeclaration | ts.EnumDeclaration | ts.ClassDeclaration,
+      ) =>
+        statement.name?.getText() === typeName &&
+        Array.isArray(statementModifiers) &&
+        statementModifiers.some((mod) => mod.kind === ts.SyntaxKind.ExportKeyword);
 
-    // Is the interface exported through a named export
-    const isTypeInExportDeclaration =
-      ts.isExportDeclaration(st) &&
-      ts.isNamedExports(st.exportClause) &&
-      st.exportClause.elements.some((nee) => nee.name.getText() === typeName);
+      // Is the interface defined in the file and exported
+      const isInterfaceDeclarationExported = ts.isInterfaceDeclaration(st) && isDeclarationExported(st);
 
-    return (
-      isInterfaceDeclarationExported ||
-      isTypeAliasDeclarationExported ||
-      isEnumDeclarationExported ||
-      isTypeInExportDeclaration
+      const isTypeAliasDeclarationExported = ts.isTypeAliasDeclaration(st) && isDeclarationExported(st);
+
+      const isEnumDeclarationExported = ts.isEnumDeclaration(st) && isDeclarationExported(st);
+
+      const isClassDeclarationExported = ts.isClassDeclaration(st) && isDeclarationExported(st);
+
+      const isExported =
+        isInterfaceDeclarationExported ||
+        isTypeAliasDeclarationExported ||
+        isEnumDeclarationExported ||
+        isClassDeclarationExported;
+
+      if (!isExported) {
+        return undefined;
+      }
+
+      // Direct export declarations, with an optional default modifier
+      const isDefault = statementModifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword);
+      return isDefault ? { isDefault: true } : {};
+    },
+    undefined,
+  );
+
+  if (localExport) {
+    const localDecl = findTypeWithName(sourceFile, typeName);
+    const id = addToLibrary(
+      type,
+      typeName,
+      checker,
+      sourceFile.fileName,
+      localDecl && checker.getSymbolAtLocation(localDecl.name),
     );
-  });
-
-  if (isExported) {
-    const id = addToLibrary(type, typeName, checker, sourceFile.fileName);
 
     return {
       location: 'local',
@@ -569,7 +817,51 @@ const getTypeReferenceLocation = (
       // will not be used for component event definitions
       path: sourceFile.fileName,
       id,
+      ...(localExport.isDefault ? { isDefault: true } : {}),
+      ...(localExport.referenceLocation ? { referenceLocation: localExport.referenceLocation } : {}),
     };
+  }
+
+  // Check for default imports (import MyEnum from '...')
+  const defaultImportDeclaration = sourceFile.statements.find((st) => {
+    if (!ts.isImportDeclaration(st) || !st.importClause) {
+      return false;
+    }
+    // Check if the default import name matches the type name
+    const defaultImportName = st.importClause.name;
+    return defaultImportName && defaultImportName.getText() === typeName;
+  }) as ts.ImportDeclaration;
+
+  if (defaultImportDeclaration) {
+    const localImportPath = (<ts.StringLiteral>defaultImportDeclaration.moduleSpecifier).text;
+    const defaultImportName = defaultImportDeclaration.importClause.name;
+    const importedSymbol = resolveAliasedSymbol(checker, checker.getSymbolAtLocation(defaultImportName));
+    const declaration = importedSymbol?.valueDeclaration ?? importedSymbol?.declarations?.[0];
+
+    if (importedSymbol && declaration) {
+      if (ts.isClassDeclaration(declaration) || ts.isEnumDeclaration(declaration)) {
+        type = checker.getTypeOfSymbolAtLocation(importedSymbol, declaration);
+      }
+      const declarationNodeName = (declaration as ts.NamedDeclaration).name;
+      const declarationName =
+        declarationNodeName && ts.isIdentifier(declarationNodeName)
+          ? declarationNodeName.getText()
+          : importedSymbol.getName();
+      const originalTypeName = declarationName === 'default' ? typeName : declarationName;
+      const id = addToLibrary(
+        type,
+        originalTypeName,
+        checker,
+        normalizePath(declaration.getSourceFile().fileName, false),
+        importedSymbol,
+      );
+      return {
+        location: 'import',
+        path: localImportPath,
+        id,
+        isDefault: true,
+      };
+    }
   }
 
   // This is most likely a global type, if it is a local that is not exported then typescript will inform the dev
@@ -625,15 +917,10 @@ export const resolveType = (checker: ts.TypeChecker, type: ts.Type): string => {
   }
 
   let parts = Array.from(set.keys()).sort();
-  // TODO(STENCIL-366): Get this section of code under tests that directly exercise this behavior
   if (parts.length > 1) {
     parts = parts.map((p) => (p.indexOf('=>') >= 0 ? `(${p})` : p));
   }
-  if (parts.length > 20) {
-    return typeToString(checker, type);
-  } else {
-    return parts.join(' | ');
-  }
+  return parts.join(' | ');
 };
 
 /**
@@ -671,8 +958,35 @@ export const parseDocsType = (checker: ts.TypeChecker, type: ts.Type, parts: Set
       parseDocsType(checker, t, parts);
     });
   } else {
-    const text = typeToString(checker, type);
-    parts.add(text);
+    // Check if this is a type alias (generic or non-generic) that should be expanded
+    // For documentation purposes, we want to show the actual literal values
+    // rather than type alias names like "ColorName" or "AllowedColors<...>"
+    if (type.aliasSymbol) {
+      if (type.aliasTypeArguments && type.aliasTypeArguments.length > 0) {
+        // Generic type alias: recursively parse each type argument
+        // This handles cases like: type Foo<T> = T; where Foo<"a" | "b"> should become "a" | "b"
+        type.aliasTypeArguments.forEach((argType) => {
+          parseDocsType(checker, argType, parts);
+        });
+      } else if (type.aliasSymbol.declarations && type.aliasSymbol.declarations.length > 0) {
+        // Non-generic type alias: get the aliased type and recurse
+        // This handles cases like: type ColorName = "a" | "b" | "c"
+        const aliasedType = checker.getTypeAtLocation(type.aliasSymbol.declarations[0]);
+        if (aliasedType && aliasedType !== type) {
+          parseDocsType(checker, aliasedType, parts);
+        } else {
+          const text = typeToString(checker, type);
+          parts.add(text);
+        }
+      } else {
+        // Type alias but no declarations (e.g., global or external types)
+        const text = typeToString(checker, type);
+        parts.add(text);
+      }
+    } else {
+      const text = typeToString(checker, type);
+      parts.add(text);
+    }
   }
 };
 
@@ -726,6 +1040,27 @@ export const getComponentMeta = (
     }
   }
   return undefined;
+};
+
+/**
+ * Updates a mixin class; cleans up static metadata properties and
+ * adds the `registerInstance` method to the constructor
+ *
+ * @param classNode the class node to update
+ * @param moduleFile the module file containing the class node
+ * @param cmp the component metadata to update
+ * @param transformOpts the transformation options to use
+ * @returns the updated class node
+ */
+export const updateMixin = (
+  classNode: ts.ClassDeclaration,
+  moduleFile: d.Module,
+  cmp: d.ComponentCompilerMeta,
+  transformOpts: d.TransformOptions,
+) => {
+  const classMembers = removeStaticMetaProperties(classNode);
+  updateLazyComponentConstructor(classMembers, classNode, moduleFile, cmp);
+  return updateComponentClass(transformOpts, classNode, classNode.heritageClauses, classMembers);
 };
 
 /**
@@ -947,13 +1282,32 @@ export const retrieveTsModifiers = (node: ts.Node): ReadonlyArray<ts.Modifier> |
 };
 
 /**
+ * Helper method for finding a `super()` call in a constructor body.
+ * @param constructorBodyStatements the body statements of a constructor
+ * @returns the first statement in the constructor body that is a call to `super()`
+ */
+export function foundSuper(constructorBodyStatements: ts.NodeArray<ts.Statement>) {
+  return constructorBodyStatements?.find(
+    (s) =>
+      ts.isExpressionStatement(s) &&
+      ts.isCallExpression(s.expression) &&
+      (s.expression.expression.kind === ts.SyntaxKind.SuperKeyword ||
+        (ts.isIdentifier(s.expression.expression) && s.expression.expression.escapedText === 'super')),
+  );
+}
+
+/**
  * Helper util for updating the constructor on a class declaration AST node.
+ * - Adds a `super()` call if needed
+ * - Merges in any provided statements into the constructor body
  *
  * @param classNode the class node whose constructor will be updated
  * @param classMembers a list of class members for that class
  * @param statements a list of statements which should be added to the
  * constructor
  * @param parameters an optional list of parameters for the constructor
+ * @param superArgs the arguments for the `super()` call (see {@link SuperArgs}). `'false'` also
+ * replaces an existing `super()` call.
  * @returns a list of updated class elements
  */
 export const updateConstructor = (
@@ -961,42 +1315,53 @@ export const updateConstructor = (
   classMembers: ts.ClassElement[],
   statements: ts.Statement[],
   parameters?: ts.ParameterDeclaration[],
+  superArgs?: SuperArgs,
 ): ts.ClassElement[] => {
-  const constructorIndex = classMembers.findIndex((m) => m.kind === ts.SyntaxKind.Constructor);
+  const constructorIndex = classMembers.findIndex((m) => ts.isConstructorDeclaration(m) && m.body != null);
   const constructorMethod = classMembers[constructorIndex];
 
-  if (constructorIndex >= 0 && ts.isConstructorDeclaration(constructorMethod)) {
-    const constructorBodyStatements: ts.NodeArray<ts.Statement> =
-      constructorMethod.body?.statements ?? ts.factory.createNodeArray();
-    const hasSuper = constructorBodyStatements.some((s) => s.kind === ts.SyntaxKind.SuperKeyword);
+  if (constructorIndex < 0 && !statements?.length && !needsSuper(classNode)) return classMembers;
 
-    if (!hasSuper && needsSuper(classNode)) {
+  // we have a constructor; let's update it
+  if (constructorIndex >= 0 && ts.isConstructorDeclaration(constructorMethod)) {
+    const constructorBodyStatements = constructorMethod.body?.statements;
+    let foundSuperCall = foundSuper(constructorBodyStatements);
+
+    if (!foundSuperCall && needsSuper(classNode)) {
       // if there is no super and it needs one the statements comprising the
       // body of the constructor should be:
       //
       // 1. the `super()` call
       // 2. the new statements we've created to initialize fields
       // 3. the statements currently comprising the body of the constructor
-      statements = [createConstructorBodyWithSuper(), ...statements, ...constructorBodyStatements];
+      statements = [createConstructorBodyWithSuper(superArgs), ...statements, ...constructorBodyStatements];
     } else {
-      // if no super is needed then the body of the constructor should be:
-      //
-      // 1. the new statements we've created
-      // 2. the statements currently comprising the body of the constructor
-      statements = [...statements, ...constructorBodyStatements];
+      const updatedStatements = constructorBodyStatements.filter((s) => s !== foundSuperCall);
+      // if no new super is needed. The body of the constructor should be:
+      // 1. Any current super call
+      // 2. the new statements we've created
+      // 3. the statements currently comprising the body of the constructor
+      if (foundSuperCall) {
+        if (superArgs === 'false') {
+          foundSuperCall = createConstructorBodyWithSuper(superArgs);
+        }
+        statements = [foundSuperCall, ...statements, ...updatedStatements];
+      } else {
+        statements = [...statements, ...updatedStatements];
+      }
     }
 
     classMembers[constructorIndex] = ts.factory.updateConstructorDeclaration(
       constructorMethod,
       retrieveTsModifiers(constructorMethod),
-      constructorMethod.parameters.concat(parameters ?? []),
+      [...[...(parameters ?? []), ...constructorMethod.parameters]],
       ts.factory.updateBlock(constructorMethod?.body ?? ts.factory.createBlock([]), statements),
     );
   } else {
     // we don't seem to have a constructor, so let's create one and stick it
     // into the array of class elements
     if (needsSuper(classNode)) {
-      statements = [createConstructorBodyWithSuper(), ...statements];
+      statements = [createConstructorBodyWithSuper(superArgs), ...statements];
     }
 
     // add the new constructor to the class members, putting it at the
@@ -1005,7 +1370,6 @@ export const updateConstructor = (
       ts.factory.createConstructorDeclaration(undefined, parameters ?? [], ts.factory.createBlock(statements, true)),
     );
   }
-
   return classMembers;
 };
 
@@ -1033,12 +1397,29 @@ const needsSuper = (classDeclaration: ts.ClassDeclaration): boolean => {
 };
 
 /**
- * Create a statement with a call to `super()` suitable for including in the body of a constructor.
- * @returns a {@link ts.ExpressionStatement} node equivalent to `super()`
+ * The arguments for a generated `super()` call:
+ * - `'false'`: `super(false)`. Used in native Stencil components which extend other Stencil
+ *   components to stop the base component from being initialized.
+ * - `'forward'`: `super(...arguments)`. Used for a `super()` call the source didn't write, so the
+ *   constructor forwards its arguments like an implicit constructor does.
+ * - `undefined`: `super()`.
  */
-const createConstructorBodyWithSuper = (): ts.ExpressionStatement => {
+type SuperArgs = 'false' | 'forward';
+
+/**
+ * Create a statement with a call to `super()` suitable for including in the body of a constructor.
+ * @param superArgs the arguments for the call (see {@link SuperArgs})
+ * @returns a {@link ts.ExpressionStatement} node for the `super()` call
+ */
+const createConstructorBodyWithSuper = (superArgs?: SuperArgs): ts.ExpressionStatement => {
+  const args =
+    superArgs === 'false'
+      ? [ts.factory.createFalse()]
+      : superArgs === 'forward'
+        ? [ts.factory.createSpreadElement(ts.factory.createIdentifier('arguments'))]
+        : undefined;
   return ts.factory.createExpressionStatement(
-    ts.factory.createCallExpression(ts.factory.createIdentifier('super'), undefined, undefined),
+    ts.factory.createCallExpression(ts.factory.createIdentifier('super'), undefined, args),
   );
 };
 
@@ -1049,7 +1430,10 @@ const createConstructorBodyWithSuper = (): ts.ExpressionStatement => {
  * @param typeChecker a reference to the {@link ts.TypeChecker}
  * @returns the name of the property in string form
  */
-export const tsPropDeclNameAsString = (node: ts.PropertyDeclaration, typeChecker: ts.TypeChecker): string => {
+export const tsPropDeclName = (
+  node: ts.PropertyDeclaration | ts.GetAccessorDeclaration,
+  typeChecker: ts.TypeChecker,
+): { staticName: string; dynamicName: string } => {
   const declarationName: ts.DeclarationName = ts.getNameOfDeclaration(node);
 
   // The name of a class field declaration can be a computed property name,
@@ -1073,15 +1457,18 @@ export const tsPropDeclNameAsString = (node: ts.PropertyDeclaration, typeChecker
   // ```
   //
   // we can just call `.getText` on the name itself.
-  let memberName = declarationName.getText();
+  let staticName = declarationName.getText();
+  let dynamicName;
+
   if (ts.isComputedPropertyName(declarationName)) {
+    dynamicName = declarationName.expression.getText();
     const type = typeChecker.getTypeAtLocation(declarationName.expression);
     if (type != null && type.isLiteral()) {
-      memberName = type.value.toString();
+      staticName = type.value.toString();
     }
   }
 
-  return memberName;
+  return { staticName, dynamicName };
 };
 
 /**
@@ -1114,4 +1501,105 @@ export function getExternalStyles(style: d.StyleCompiler) {
        */
       .reverse()
   );
+}
+
+/**
+ * Adds tag transformation to a CSS string.
+ * Turns `tag-name { ... }` into `${tagTransform('tag-name')} { ... }`
+ *
+ * @param cssCode The CSS code to transform.
+ * @param tagNames The tag names to transform.
+ * @returns The transformed CSS code.
+ */
+export function addTagTransformToCssString(cssCode: string, tagNames: string[]): string {
+  const result = postcss([
+    (root: postcss.Root) => {
+      root.walkRules((rule) => {
+        rule.selectors = rule.selectors.map((sel) => {
+          const parsedSelector = postcssSelectorParser().astSync(sel) as any;
+          parsedSelector.walkTags((tag: any) => {
+            if (tagNames.includes(tag.value)) {
+              tag.value = '${' + TRANSFORM_TAG + '("' + tag.value + '")}';
+            }
+          });
+          return parsedSelector.toString();
+        });
+      });
+    },
+  ]).process(cssCode, { parser: postcssSafeParser });
+  return result.css;
+}
+
+/**
+ * Transforms CSS code into a TypeScript AST TemplateExpression or NoSubstitutionTemplateLiteral,
+ * replacing specified tag names with `tagTransform("tag-name")` calls.
+ * Turns `tag-name { ... }` into `${tagTransform('tag-name')} { ... }`
+ *
+ * @param cssCode The CSS code to transform.
+ * @param tagNames The tag names to transform.
+ * @returns The transformed CSS code.
+ */
+export function addTagTransformToCssTsAST(
+  cssCode: string,
+  tagNames: string[],
+): ts.TemplateExpression | ts.NoSubstitutionTemplateLiteral {
+  const placeholders: string[] = [];
+
+  const processor = postcss([
+    (root: postcss.Root) => {
+      root.walkRules((rule) => {
+        // parse the selector and replace tag nodes with placeholders
+        const parsed = postcssSelectorParser().astSync(rule.selector);
+        parsed.walkTags((tagNode: any) => {
+          if (tagNames.includes(tagNode.value)) {
+            const idx = placeholders.length;
+            const token = `___EXPR_${idx}___`;
+            placeholders.push(tagNode.value);
+            tagNode.value = token;
+          }
+        });
+
+        // overwrite the rule.selector with the selector that contains tokens
+        rule.selector = parsed.toString();
+      });
+    },
+  ]);
+
+  // populate selector placeholders
+  const transformed = processor.process(cssCode, { parser: postcssSafeParser }).css;
+
+  if (placeholders.length === 0) {
+    // no tag names found, return as-is
+    return ts.factory.createNoSubstitutionTemplateLiteral(transformed);
+  }
+
+  // Split by placeholder tokens, preserving the index number ([literal, idx, literal, idx, literal...])
+  const splitParts = transformed.split(/___EXPR_(\d+)___/);
+  const firstLiteral = splitParts[0] ?? '';
+
+  // Build spans array
+  const spans: ts.TemplateSpan[] = [];
+  for (let i = 1; i < splitParts.length; i += 2) {
+    const idxStr = splitParts[i];
+    const literalAfter = splitParts[i + 1] ?? '';
+
+    const exprIndex = Number(idxStr);
+    const tagName = placeholders[exprIndex];
+    // build call expression: tagTransform("tag-name")
+    const expr = ts.factory.createCallExpression(ts.factory.createIdentifier(TRANSFORM_TAG), undefined, [
+      ts.factory.createStringLiteral(tagName),
+    ]);
+
+    // Determine if this span is the last span -> TemplateTail else TemplateMiddle
+    const isLastSpan = i + 1 >= splitParts.length - 1;
+    const literalNode = isLastSpan
+      ? ts.factory.createTemplateTail(literalAfter)
+      : ts.factory.createTemplateMiddle(literalAfter);
+
+    spans.push(ts.factory.createTemplateSpan(expr, literalNode));
+  }
+
+  // Create TemplateHead from firstLiteral and return TemplateExpression
+  const head = ts.factory.createTemplateHead(firstLiteral);
+  return ts.factory.createTemplateExpression(head, spans);
 }

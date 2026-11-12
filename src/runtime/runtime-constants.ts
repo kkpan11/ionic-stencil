@@ -54,11 +54,19 @@ export const CONTENT_REF_ID = 'r';
 export const ORG_LOCATION_ID = 'o';
 export const SLOT_NODE_ID = 's';
 export const TEXT_NODE_ID = 't';
+export const COMMENT_NODE_ID = 'c';
 
 export const HYDRATE_ID = 's-id';
 export const HYDRATED_STYLE_ID = 'sty-id';
 export const HYDRATE_CHILD_ID = 'c-id';
 export const HYDRATED_CSS = '{visibility:hidden}.hydrated{visibility:inherit}';
+
+export const STENCIL_DOC_DATA = '_stencilDocData';
+export const DEFAULT_DOC_DATA = {
+  hostIds: 0,
+  rootLevelIds: 0,
+  staticComponents: new Set<string>(),
+};
 
 /**
  * Constant for styles to be globally applied to `slot-fb` elements for pseudo-slot behavior.
@@ -69,6 +77,17 @@ export const HYDRATED_CSS = '{visibility:hidden}.hydrated{visibility:inherit}';
 export const SLOT_FB_CSS = 'slot-fb{display:contents}slot-fb[hidden]{display:none}';
 
 export const XLINK_NS = 'http://www.w3.org/1999/xlink';
+
+/**
+ * The maximum number of times a lazy component's failed dynamic `import()`
+ * will be retried (on host reconnect) before giving up permanently.
+ */
+export const MAX_LAZY_LOAD_RETRIES = 3;
+
+/**
+ * Minimum delay, in milliseconds, before retrying a failed lazy component load.
+ */
+export const LAZY_LOAD_RETRY_INTERVAL_MS = 1000;
 
 export const FORM_ASSOCIATED_CUSTOM_ELEMENT_CALLBACKS = [
   'formAssociatedCallback',

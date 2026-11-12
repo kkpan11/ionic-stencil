@@ -1,5 +1,5 @@
 import { MockDocument } from '../document';
-import { serializeNodeToHtml } from '../serialize-node';
+import { EMPTY_ELEMENTS, serializeNodeToHtml } from '../serialize-node';
 
 describe('serializeNodeToHtml', () => {
   let doc: MockDocument;
@@ -144,18 +144,44 @@ describe('serializeNodeToHtml', () => {
     expect(elm).toEqualHtml(`
       <cmp-a>
         <mock:shadow-root>
-          <article>
-            shadow top
-          </article>
+          <article>shadow top</article>
           <slot></slot>
-          <section>
-            shadow bottom
-          </section>
+          <section>shadow bottom</section>
         </mock:shadow-root>
-        <div>
-          light dom
-        </div>
+        <div>light dom</div>
       </cmp-a>
+    `);
+  });
+
+  it('shadow root to template with focus delegation', () => {
+    const elm = doc.createElement('cmp-a');
+    expect(elm.shadowRoot).toEqual(null);
+
+    const shadowRoot = elm.attachShadow({ mode: 'open', delegatesFocus: true });
+    expect(shadowRoot.nodeType).toEqual(11);
+    expect(elm.shadowRoot.nodeType).toEqual(11);
+
+    expect(shadowRoot.host).toEqual(elm);
+    expect(elm.outerHTML).toContain('<template shadowrootmode="open" shadowrootdelegatesfocus');
+  });
+
+  it('shadow root with focus delegation matches toEqualHtml', () => {
+    const elm = doc.createElement('my-tag');
+    elm.setAttribute('tabindex', '0');
+    const shadowRoot = elm.attachShadow({ mode: 'open', delegatesFocus: true });
+
+    const div = doc.createElement('div');
+    div.innerHTML = 'test content';
+    shadowRoot.appendChild(div);
+
+    // Test that the serialized output matches the expected format
+    // This ensures shadowrootdelegatesfocus appears without ="" when compared
+    expect(elm).toEqualHtml(`
+      <my-tag tabindex="0">
+        <mock:shadow-root shadowrootdelegatesfocus>
+          <div>test content</div>
+        </mock:shadow-root>
+      </my-tag>
     `);
   });
 
@@ -172,7 +198,7 @@ describe('serializeNodeToHtml', () => {
     doc.body.innerHTML = input;
 
     const output = serializeNodeToHtml(doc.body);
-    expect(input).toBe(output);
+    expect(output).toBe(`<template>text</template>`);
   });
 
   it('svg', () => {
@@ -277,5 +303,20 @@ describe('serializeNodeToHtml', () => {
     const scriptElm = doc.createElement('script');
     scriptElm.innerHTML = input;
     expect(scriptElm.innerHTML).toBe(input);
+  });
+
+  it.each([...EMPTY_ELEMENTS])("does not add a closing tag for '%s'", (voidElm) => {
+    if (voidElm === 'frame') {
+      // 'frame' is a non-HTML5 compatible/deprecated element.
+      // Stencil technically still supports it, but it doesn't get rendered as a child element, so let's just skip it
+      return;
+    }
+
+    const elm = doc.createElement('div');
+
+    elm.innerHTML = `<${voidElm}>`;
+
+    const html = serializeNodeToHtml(elm, { prettyHtml: true });
+    expect(html).toBe(`<${voidElm}>`);
   });
 });

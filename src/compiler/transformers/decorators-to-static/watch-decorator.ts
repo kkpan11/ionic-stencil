@@ -26,11 +26,19 @@ const parseWatchDecorator = (
   typeChecker: ts.TypeChecker,
   method: ts.MethodDeclaration,
   decoratorName: string,
-): d.ComponentCompilerWatch[] => {
+): d.ComponentCompilerChangeHandler[] => {
   const methodName = method.name.getText();
   const decorators = retrieveTsDecorators(method) ?? [];
   return decorators.filter(isDecoratorNamed(decoratorName)).map((decorator) => {
-    const [propName] = getDecoratorParameters<string>(decorator, typeChecker);
+    const [propName, handlerOptions] = getDecoratorParameters<string, { immediate?: boolean }>(decorator, typeChecker);
+
+    if (handlerOptions) {
+      return {
+        propName,
+        methodName,
+        handlerOptions,
+      };
+    }
 
     return {
       propName,

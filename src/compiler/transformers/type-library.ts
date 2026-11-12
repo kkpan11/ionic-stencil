@@ -3,7 +3,8 @@ import ts from 'typescript';
 
 import type * as d from '../../declarations';
 import { ValidatedConfig } from '../../declarations';
-import { typeToString } from './transform-utils';
+import { isNodeModulePath } from '../sys/resolve/resolve-utils';
+import { resolveAliasedSymbol, typeToString } from './transform-utils';
 
 /**
  * This is a {@link d.JsonDocsTypeLibrary} cache which is used to store a
@@ -21,6 +22,7 @@ const TYPE_LIBRARY: d.JsonDocsTypeLibrary = {};
  * @param typeName the type's name
  * @param checker a {@link ts.TypeChecker} instance
  * @param pathToTypeModule the path to the home module of the type
+ * @param symbol the symbol the type was looked up by, if known
  * @returns the unique ID for the type in question
  */
 export function addToLibrary(
@@ -28,23 +30,31 @@ export function addToLibrary(
   typeName: string,
   checker: ts.TypeChecker,
   pathToTypeModule: string,
+  symbol?: ts.Symbol,
 ): string {
   pathToTypeModule = relative(process.cwd(), pathToTypeModule);
 
-  // for now we don't make any attempt to include types in node_modules
+  // Create a stub path for types that are in node_modules,
+  // this allows us to have a unique ID for types that are from
+  // external packages so we can leverage the original type name when
+  // dealing with type aliases.
   if (pathToTypeModule.startsWith('node_modules')) {
-    return '';
+    return 'node_modules::' + typeName;
   }
 
   const id = getTypeId(pathToTypeModule, typeName);
 
   if (!type.isTypeParameter() && !(id in TYPE_LIBRARY)) {
-    const declaration = getTypeDeclaration(checker, type);
+    // an alias of an array or another lib or package type resolves to a declaration outside the project
+    const alias = symbol?.declarations?.find(ts.isTypeAliasDeclaration);
+    const resolvedFile = getSymbolForType(type)?.declarations?.[0]?.getSourceFile();
+    const useAlias = alias && resolvedFile && (resolvedFile.hasNoDefaultLib || isNodeModulePath(resolvedFile.fileName));
+    const declaration = useAlias ? alias.getText() : getTypeDeclaration(checker, type);
 
     if (declaration !== '') {
       TYPE_LIBRARY[id] = {
         declaration,
-        docstring: getTypeDocstring(type, checker),
+        docstring: getTypeDocstring(type, checker, useAlias ? symbol : undefined),
         path: pathToTypeModule,
       };
     }
@@ -161,7 +171,13 @@ export function addFileToLibrary(config: ValidatedConfig, filePath: string): voi
   for (const node of exportedTypesInSourceFile(sourceFile)) {
     const type = checker.getTypeAtLocation(node);
     const typeName = node.name.getText();
-    addToLibrary(type, typeName, checker, normalizePath(node.getSourceFile().fileName, false));
+    addToLibrary(
+      type,
+      typeName,
+      checker,
+      normalizePath(node.getSourceFile().fileName, false),
+      checker.getSymbolAtLocation(node.name),
+    );
   }
 }
 
@@ -228,22 +244,9 @@ export function getOriginalTypeName(identifier: ts.Node, checker: ts.TypeChecker
   if (!possiblyAliasedSymbol) {
     return undefined;
   }
-  const unaliasedSymbol = unalias(possiblyAliasedSymbol, checker);
+  const unaliasedSymbol = resolveAliasedSymbol(checker, possiblyAliasedSymbol);
   const name = unaliasedSymbol.getName();
   return name;
-}
-
-/**
- * Check if a symbol is an alias of another symbol and, if so, use the
- * {@link ts.TypeChecker} to resolve the original. If not, just return the same
- * symbol.
- *
- * @param symbol the symbol of interest
- * @param checker a {@link ts.TypeChecker}
- * @returns a de-aliased symbol
- */
-function unalias(symbol: ts.Symbol, checker: ts.TypeChecker): ts.Symbol {
-  return symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
 }
 
 /**
@@ -313,10 +316,11 @@ function getTypeDeclaration(checker: ts.TypeChecker, type: ts.Type): string {
  *
  * @param type the type in question
  * @param checker a {@link ts.TypeChecker} instance
+ * @param aliasSymbol the symbol of the alias the type was declared as, if any
  * @returns the type's docstring if present, else an empty string
  */
-function getTypeDocstring(type: ts.Type, checker: ts.TypeChecker): string {
-  const symbol = type?.symbol;
+function getTypeDocstring(type: ts.Type, checker: ts.TypeChecker, aliasSymbol?: ts.Symbol): string {
+  const symbol = aliasSymbol ?? type?.symbol;
 
   return symbol ? ts.displayPartsToString(symbol.getDocumentationComment(checker)) : '';
 }

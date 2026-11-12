@@ -1,6 +1,6 @@
 # styleurls-component
 
-
+This file is the original readme that is beside the component.
 
 <!-- Auto Generated Below -->
 

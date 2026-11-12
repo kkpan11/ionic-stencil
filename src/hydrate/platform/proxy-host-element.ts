@@ -1,18 +1,32 @@
 import { consoleError, getHostRef } from '@platform';
 import { getValue, parsePropertyValue, setValue } from '@runtime';
-import { CMP_FLAGS, MEMBER_FLAGS } from '@utils';
+import { CMP_FLAGS, createShadowRoot, MEMBER_FLAGS } from '@utils';
 
 import type * as d from '../../declarations';
 
-export function proxyHostElement(elm: d.HostElement, cmpMeta: d.ComponentRuntimeMeta): void {
+export function proxyHostElement(elm: d.HostElement, cstr: d.ComponentConstructor): void {
+  const cmpMeta = cstr.cmpMeta;
+  cmpMeta.$watchers$ = cmpMeta.$watchers$ || cstr.watchers;
+  cmpMeta.$deserializers$ = cmpMeta.$deserializers$ || cstr.deserializers;
+  cmpMeta.$serializers$ = cmpMeta.$serializers$ || cstr.serializers;
+
   if (typeof elm.componentOnReady !== 'function') {
     elm.componentOnReady = componentOnReady;
   }
   if (typeof elm.forceUpdate !== 'function') {
     elm.forceUpdate = forceUpdate;
   }
-  if (cmpMeta.$flags$ & CMP_FLAGS.shadowDomEncapsulation) {
-    (elm as any).shadowRoot = elm;
+
+  /**
+   * Only attach shadow root if there isn't one already and
+   * the component is rendering DSD (not scoped) during SSR
+   */
+  if (
+    !elm.shadowRoot &&
+    !!(cmpMeta.$flags$ & CMP_FLAGS.shadowDomEncapsulation) &&
+    !(cmpMeta.$flags$ & CMP_FLAGS.shadowNeedsScopedCss)
+  ) {
+    createShadowRoot.call(elm, cmpMeta);
   }
 
   if (cmpMeta.$members$ != null) {
@@ -20,45 +34,86 @@ export function proxyHostElement(elm: d.HostElement, cmpMeta: d.ComponentRuntime
 
     const members = Object.entries(cmpMeta.$members$);
 
-    members.forEach(([memberName, m]) => {
-      const memberFlags = m[0];
-
+    members.forEach(([memberName, [memberFlags, metaAttributeName]]) => {
       if (memberFlags & MEMBER_FLAGS.Prop) {
-        const attributeName = m[1] || memberName;
+        // hyphenated attribute name
+        const attributeName = metaAttributeName || memberName;
+        // attribute value
         const attrValue = elm.getAttribute(attributeName);
+        // property value
+        const propValue = (elm as any)[memberName];
+        let attrPropVal: any;
+        // any existing getter/setter applied to class property
+        const { get: origGetter, set: origSetter } =
+          Object.getOwnPropertyDescriptor((cstr as any).prototype, memberName) || {};
 
         if (attrValue != null) {
-          const parsedAttrValue = parsePropertyValue(attrValue, memberFlags);
-          hostRef.$instanceValues$.set(memberName, parsedAttrValue);
+          // incoming value from `an-attribute=....`.
+
+          if (cmpMeta.$deserializers$?.[memberName]) {
+            // we have a custom deserializer for this member
+            for (const deserializer of cmpMeta.$deserializers$[memberName]) {
+              const [[methodName]] = Object.entries(deserializer);
+              attrPropVal = (cstr as any).prototype[methodName](attrValue, memberName);
+            }
+          } else {
+            // otherwise, convert from string to correct type
+            attrPropVal = parsePropertyValue(attrValue, memberFlags, !!(cmpMeta.$flags$ & CMP_FLAGS.formAssociated));
+          }
         }
 
-        const ownValue = (elm as any)[memberName];
-        if (ownValue !== undefined) {
-          // we've got an actual value already set on the host element
-          // let's add that to our instance values and pull it off the element
-          // so the getter/setter kicks in instead, but still getting this value
-          hostRef.$instanceValues$.set(memberName, ownValue);
+        if (propValue !== undefined) {
+          // incoming value set on the host element (e.g `element.aProp = ...`)
+          // let's add that to our instance values and pull it off the element.
+          // This allows any applied getter/setter to kick in instead whilst still getting this value
+          attrPropVal = propValue;
           delete (elm as any)[memberName];
         }
 
-        // create the getter/setter on the host element for this property name
-        Object.defineProperty(elm, memberName, {
-          get(this: d.RuntimeRef) {
-            // proxyComponent, get value
+        if (attrPropVal !== undefined) {
+          // value set via attribute/prop on the host element
+          if (origSetter) {
+            // we have an original setter, so let's set the value via that.
+            origSetter.apply(elm, [attrPropVal]);
+            attrPropVal = origGetter ? origGetter.apply(elm) : attrPropVal;
+          }
+          hostRef?.$instanceValues$?.set(memberName, attrPropVal);
+        }
+
+        // element
+        const getterSetterDescriptor: PropertyDescriptor = {
+          get: function (this: d.RuntimeRef) {
             return getValue(this, memberName);
           },
-          set(this: d.RuntimeRef, newValue) {
-            // proxyComponent, set value
+          set: function (this: d.RuntimeRef, newValue: unknown) {
             setValue(this, memberName, newValue, cmpMeta);
           },
           configurable: true,
           enumerable: true,
+        };
+        Object.defineProperty(elm, memberName, getterSetterDescriptor);
+        Object.defineProperty(elm, metaAttributeName, getterSetterDescriptor);
+
+        hostRef.$fetchedCbList$.push(() => {
+          if (!hostRef?.$instanceValues$?.has(memberName)) {
+            setValue(
+              elm,
+              memberName,
+              attrPropVal !== undefined ? attrPropVal : hostRef.$lazyInstance$[memberName],
+              cmpMeta,
+            );
+          }
+          Object.defineProperty(hostRef.$lazyInstance$, memberName, getterSetterDescriptor);
         });
       } else if (memberFlags & MEMBER_FLAGS.Method) {
         Object.defineProperty(elm, memberName, {
           value(this: d.HostElement, ...args: any[]) {
             const ref = getHostRef(this);
-            return ref.$onInstancePromise$.then(() => ref.$lazyInstance$[memberName](...args)).catch(consoleError);
+            return ref?.$onInstancePromise$
+              ?.then(() => ref?.$lazyInstance$?.[memberName](...args))
+              .catch((e) => {
+                consoleError(e, this);
+              });
           },
         });
       }
@@ -67,7 +122,7 @@ export function proxyHostElement(elm: d.HostElement, cmpMeta: d.ComponentRuntime
 }
 
 function componentOnReady(this: d.HostElement) {
-  return getHostRef(this).$onReadyPromise$;
+  return getHostRef(this)?.$onReadyPromise$;
 }
 
 function forceUpdate(this: d.HostElement) {

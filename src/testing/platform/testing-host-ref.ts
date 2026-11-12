@@ -1,7 +1,6 @@
-import { addHostEventListeners } from '@runtime';
 import type * as d from '@stencil/core/internal';
-
-import { hostRefs } from './testing-constants';
+import { createEvent } from '../../runtime/event-emitter';
+import { EVENT_FLAGS } from '@utils';
 
 /**
  * Retrieve the data structure tracking the component by its runtime reference
@@ -9,21 +8,21 @@ import { hostRefs } from './testing-constants';
  * @returns the corresponding Stencil reference data structure, or undefined if one cannot be found
  */
 export const getHostRef = (elm: d.RuntimeRef | undefined): d.HostRef | undefined => {
-  return hostRefs.get(elm);
+  if (elm.__stencil__getHostRef) {
+    return elm.__stencil__getHostRef();
+  }
+
+  return undefined;
 };
 
 /**
  * Add the provided `hostRef` instance to the global {@link hostRefs} map, using the provided `lazyInstance` as a key.
  * @param lazyInstance a Stencil component instance
  * @param hostRef an optional reference to Stencil's tracking data for the component. If none is provided, one will be created.
- * @returns the updated `hostRefs` data structure
  * @throws if the provided `lazyInstance` coerces to `null`, or if the `lazyInstance` does not have a `constructor`
  * property
  */
-export const registerInstance = (
-  lazyInstance: any,
-  hostRef: d.HostRef | null | undefined,
-): Map<d.RuntimeRef, d.HostRef> => {
+export const registerInstance = (lazyInstance: any, hostRef: d.HostRef | null | undefined) => {
   if (lazyInstance == null || lazyInstance.constructor == null) {
     throw new Error(`Invalid component constructor`);
   }
@@ -36,8 +35,56 @@ export const registerInstance = (
     hostRef = getHostRef(elm);
   }
 
+  lazyInstance.__stencil__getHostRef = () => hostRef;
   hostRef.$lazyInstance$ = lazyInstance;
-  return hostRefs.set(lazyInstance, hostRef);
+
+  // Create EventEmitters for all events from the component and its parent classes/mixins
+  // This is necessary to support events defined in mixins that may not have been included
+  // in the component's compiled constructor
+  const Cstr = lazyInstance.constructor as d.ComponentTestingConstructor;
+
+  // Collect all events from the component and its prototype chain
+  const allEvents: d.ComponentCompilerEvent[] = [];
+  const seenEventMethods = new Set<string>();
+
+  // First, add events from the component's COMPILER_META
+  if (Cstr.COMPILER_META && Cstr.COMPILER_META.events) {
+    Cstr.COMPILER_META.events.forEach((event: d.ComponentCompilerEvent) => {
+      if (!seenEventMethods.has(event.method)) {
+        allEvents.push(event);
+        seenEventMethods.add(event.method);
+      }
+    });
+  }
+
+  // Then, walk the prototype chain to find events from parent classes/mixins
+  let currentProto = Object.getPrototypeOf(Cstr);
+  while (currentProto && currentProto !== Function.prototype && currentProto.name) {
+    // Check if this parent class has a static events getter
+    if (typeof currentProto.events === 'object' && Array.isArray(currentProto.events)) {
+      currentProto.events.forEach((event: d.ComponentCompilerEvent) => {
+        if (!seenEventMethods.has(event.method)) {
+          allEvents.push(event);
+          seenEventMethods.add(event.method);
+        }
+      });
+    }
+    currentProto = Object.getPrototypeOf(currentProto);
+  }
+
+  // Create EventEmitters for all collected events
+  allEvents.forEach((eventMeta: d.ComponentCompilerEvent) => {
+    // Only create the event emitter if it doesn't already exist on the instance
+    // (it might already exist if it was created by the compiled constructor)
+    if (!lazyInstance[eventMeta.method]) {
+      let flags = 0;
+      if (eventMeta.bubbles) flags |= EVENT_FLAGS.Bubbles;
+      if (eventMeta.composed) flags |= EVENT_FLAGS.Composed;
+      if (eventMeta.cancelable) flags |= EVENT_FLAGS.Cancellable;
+
+      lazyInstance[eventMeta.method] = createEvent(lazyInstance, eventMeta.name, flags);
+    }
+  });
 };
 
 /**
@@ -51,12 +98,13 @@ export const registerHost = (elm: d.HostElement, cmpMeta: d.ComponentRuntimeMeta
     $hostElement$: elm,
     $cmpMeta$: cmpMeta,
     $instanceValues$: new Map(),
+    $serializerValues$: new Map(),
     $renderCount$: 0,
   };
+  hostRef.$fetchedCbList$ = [];
   hostRef.$onInstancePromise$ = new Promise((r) => (hostRef.$onInstanceResolve$ = r));
   hostRef.$onReadyPromise$ = new Promise((r) => (hostRef.$onReadyResolve$ = r));
   elm['s-p'] = [];
   elm['s-rc'] = [];
-  addHostEventListeners(elm, hostRef, cmpMeta.$listeners$, false);
-  hostRefs.set(elm, hostRef);
+  elm.__stencil__getHostRef = () => hostRef;
 };

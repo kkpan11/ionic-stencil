@@ -33,30 +33,14 @@ describe('convert-decorators', () => {
               "required": false,
               "optional": false,
               "docs": { "tags": [], "text": "" },
-              "attribute": "val",
+              "getter": false, 
+              "setter": false,
               "reflect": false,
+               attribute: 'val',
               "defaultValue": "\\"initial value\\""
             }
           };
         }}`,
-    );
-  });
-
-  it('should initialize decorated class fields to undefined, if nothing provided', async () => {
-    const t = transpileModule(`
-    @Component({tag: 'cmp-a'})
-      export class CmpA {
-        @Prop() val?: string;
-      }
-    `);
-
-    // we test the whole output here to ensure that the field has been
-    // removed from the class body correctly and replaced with an initializer
-    // in the constructor
-    expect(await formatCode(t.outputText)).toContain(
-      `  constructor() {
-    this.val = undefined;
-  }`,
     );
   });
 
@@ -84,6 +68,8 @@ describe('convert-decorators', () => {
         complexType: { original: 'string', resolved: 'string', references: {} },
         docs: { tags: [], text: '' },
         internal: false,
+        getter: false,
+        setter: false,
       },
     ]);
   });
@@ -110,6 +96,8 @@ describe('convert-decorators', () => {
         complexType: { original: 'string', resolved: 'string', references: {} },
         docs: { tags: [], text: '' },
         internal: false,
+        getter: false,
+        setter: false,
       },
     ]);
   });
@@ -203,8 +191,11 @@ describe('convert-decorators', () => {
     expect(await formatCode(t.outputText)).toBe(
       await c`export class CmpA extends Foobar {
         constructor() {
-          super();
           this.count = 0;
+          super(...arguments);
+        }
+        static get is() {
+          return 'cmp-a';
         }
         static get states() {
           return { "count": {} };
@@ -249,7 +240,6 @@ describe('convert-decorators', () => {
 
     expect(await formatCode(t.outputText)).toContain(
       `  constructor() {
-    this.count = undefined;
     console.log('boop');
   }`,
     );
@@ -274,7 +264,6 @@ describe('convert-decorators', () => {
     // wins.
     expect(await formatCode(t.outputText)).toContain(
       `  constructor() {
-    this.count = undefined;
     this.count = 3;
   }`,
     );
@@ -283,7 +272,7 @@ describe('convert-decorators', () => {
   it('should preserve statements in an existing constructor w/ non-decorated field', async () => {
     const t = transpileModule(`
     @Component({
-      tag: 'example',
+      tag: 'example-tag',
     })
     export class Example implements FooBar {
       private classProps: Array<string>;
@@ -297,14 +286,18 @@ describe('convert-decorators', () => {
       await c`export class Example {
         constructor() {
           this.classProps = ["variant", "theme"];
-        }}`,
+        }
+        static get is() {
+          return 'example-tag';
+        }
+      }`,
     );
   });
 
   it('should preserve statements in an existing constructor super, decorated field', async () => {
     const t = transpileModule(`
     @Component({
-      tag: 'example',
+      tag: 'example-tag',
     })
     export class Example extends Parent {
       @Prop() foo: string = "bar";
@@ -316,8 +309,8 @@ describe('convert-decorators', () => {
 
     expect(await formatCode(t.outputText)).toContain(
       `  constructor() {
-    super();
     this.foo = 'bar';
+    super(...arguments);
     console.log('hello!');
   }`,
     );

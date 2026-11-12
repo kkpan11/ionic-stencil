@@ -5,7 +5,7 @@ import { addStaticStylePropertyToClass } from '../add-static-style';
 import { transformHostData } from '../host-data-transform';
 import { removeStaticMetaProperties } from '../remove-static-meta-properties';
 import { updateComponentClass } from '../update-component-class';
-import { addWatchers } from '../watcher-meta-transform';
+import { addReactivePropHandlers } from '../reactive-handler-meta-transform';
 import { updateLazyComponentConstructor } from './lazy-constructor';
 import { addLazyElementGetter } from './lazy-element-getter';
 
@@ -28,8 +28,9 @@ export const updateLazyComponentClass = (
   classNode: ts.ClassDeclaration,
   moduleFile: d.Module,
   cmp: d.ComponentCompilerMeta,
+  buildCtx: d.BuildCtx,
 ): ts.VariableStatement | ts.ClassDeclaration => {
-  const members = updateLazyComponentMembers(transformOpts, styleStatements, classNode, moduleFile, cmp);
+  const members = updateLazyComponentMembers(transformOpts, styleStatements, classNode, moduleFile, cmp, buildCtx);
   return updateComponentClass(transformOpts, classNode, classNode.heritageClauses, members);
 };
 
@@ -49,16 +50,19 @@ const updateLazyComponentMembers = (
   classNode: ts.ClassDeclaration,
   moduleFile: d.Module,
   cmp: d.ComponentCompilerMeta,
+  buildCtx: d.BuildCtx,
 ): ts.ClassElement[] => {
   const classMembers = removeStaticMetaProperties(classNode);
 
   updateLazyComponentConstructor(classMembers, classNode, moduleFile, cmp);
   addLazyElementGetter(classMembers, moduleFile, cmp);
-  addWatchers(classMembers, cmp);
+  addReactivePropHandlers(classMembers, cmp, 'watchers');
+  addReactivePropHandlers(classMembers, cmp, 'serializers');
+  addReactivePropHandlers(classMembers, cmp, 'deserializers');
   transformHostData(classMembers, moduleFile);
 
   if (transformOpts.style === 'static') {
-    addStaticStylePropertyToClass(styleStatements, cmp);
+    addStaticStylePropertyToClass(styleStatements, cmp, buildCtx);
   }
 
   return classMembers;

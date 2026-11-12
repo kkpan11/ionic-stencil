@@ -1,4 +1,5 @@
 import {
+  filterExcludedComponents,
   getComponentsFromModules,
   isOutputTargetDistTypes,
   join,
@@ -25,7 +26,7 @@ export const runTsProgram = async (
   compilerCtx: d.CompilerCtx,
   buildCtx: d.BuildCtx,
   tsBuilder: ts.BuilderProgram,
-): Promise<boolean> => {
+): Promise<string[]> => {
   const tsSyntactic = loadTypeScriptDiagnostics(tsBuilder.getSyntacticDiagnostics());
   const tsGlobal = loadTypeScriptDiagnostics(tsBuilder.getGlobalDiagnostics());
   const tsOptions = loadTypeScriptDiagnostics(tsBuilder.getOptionsDiagnostics());
@@ -34,7 +35,7 @@ export const runTsProgram = async (
   buildCtx.diagnostics.push(...tsOptions);
 
   if (buildCtx.hasError) {
-    return false;
+    return [];
   }
 
   const tsProgram = tsBuilder.getProgram();
@@ -42,17 +43,20 @@ export const runTsProgram = async (
   const tsTypeChecker = tsProgram.getTypeChecker();
   const typesOutputTarget = config.outputTargets.filter(isOutputTargetDistTypes);
   const emittedDts: string[] = [];
+
   const emitCallback: ts.WriteFileCallback = (emitFilePath, data, _w, _e, tsSourceFiles) => {
-    if (emitFilePath.endsWith('.js') || emitFilePath.endsWith('js.map')) {
-      updateModule(config, compilerCtx, buildCtx, tsSourceFiles[0], data, emitFilePath, tsTypeChecker, null);
-    } else if (
-      emitFilePath.endsWith('.e2e.d.ts') ||
-      emitFilePath.endsWith('.spec.d.ts') ||
-      emitFilePath === 'e2e.d.ts' ||
-      emitFilePath === 'spec.d.ts'
+    if (
+      emitFilePath.includes('e2e.') ||
+      emitFilePath.includes('spec.') ||
+      emitFilePath.endsWith('e2e.d.ts') ||
+      emitFilePath.endsWith('spec.d.ts')
     ) {
       // we don't want to write these to disk!
       return;
+    }
+
+    if (emitFilePath.endsWith('.js') || emitFilePath.endsWith('js.map')) {
+      updateModule(config, compilerCtx, buildCtx, tsSourceFiles[0], data, emitFilePath, tsTypeChecker, null);
     } else if (emitFilePath.endsWith('.d.ts')) {
       const srcDtsPath = normalizePath(tsSourceFiles[0].fileName);
       const relativeEmitFilepath = getRelativeDts(config, srcDtsPath, emitFilePath);
@@ -93,14 +97,61 @@ export const runTsProgram = async (
   }
 
   // Emit files that changed
-  tsBuilder.emit(undefined, emitCallback, undefined, false, transformers);
+  const emitResult = tsBuilder.emit(undefined, emitCallback, undefined, false, transformers);
+
+  // Check for emit diagnostics
+  if (emitResult.diagnostics.length > 0) {
+    const emitDiagnostics = loadTypeScriptDiagnostics(emitResult.diagnostics);
+
+    // Enhance error messages for TS4094 to be more helpful for mixin users;
+    // These occur when mixins return classes with private/protected members that TypeScript cannot emit
+    emitDiagnostics.forEach((diagnostic) => {
+      if (diagnostic.code === '4094') {
+        diagnostic.level = 'warn';
+        diagnostic.messageText =
+          `${diagnostic.messageText}\n\n` +
+          `This commonly occurs when using mixins that return classes with private or protected members. ` +
+          `TypeScript cannot emit declaration files for anonymous classes with non-public members.\n\n` +
+          `Possible solutions:\n` +
+          `  1. Add explicit type annotations to your mixin's return type\n` +
+          `  2. Use public members in your mixin classes\n` +
+          `  3. Use JavaScript private fields (#field) instead of TypeScript's private keyword`;
+      }
+    });
+
+    buildCtx.diagnostics.push(...emitDiagnostics);
+  }
 
   const changedmodules = Array.from(compilerCtx.changedModules.keys());
   buildCtx.debug('Transpiled modules: ' + JSON.stringify(changedmodules, null, '\n'));
 
   // Finalize components metadata
   buildCtx.moduleFiles = Array.from(compilerCtx.moduleMap.values());
-  buildCtx.components = getComponentsFromModules(buildCtx.moduleFiles);
+  const allComponents = getComponentsFromModules(buildCtx.moduleFiles);
+
+  // Filter out excluded components based on config patterns
+  const { components: filteredComponents, excludedComponents } = filterExcludedComponents(allComponents, config);
+  buildCtx.components = filteredComponents;
+
+  // Queue deletion of .d.ts files for excluded components in the in-memory FS
+  // These deletions will be committed when compilerCtx.fs.commit() is called during writeBuild
+  if (excludedComponents.length > 0 && typesOutputTarget.length > 0) {
+    excludedComponents.forEach((cmp) => {
+      const srcPath = normalizePath(cmp.sourceFilePath);
+      const relativeToSrc = relative(config.srcDir, srcPath);
+      const dtsRelativePath = relativeToSrc.replace(/\.tsx?$/, '.d.ts');
+
+      typesOutputTarget.forEach((outputTarget) => {
+        const outputDtsPath = join(outputTarget.typesDir, dtsRelativePath);
+
+        // The file may have been queued for writing during emit
+        // We need to cancel the write and queue it for deletion instead
+        const item = compilerCtx.fs.getItem(outputDtsPath);
+        item.queueWriteToDisk = false;
+        item.queueDeleteFromDisk = true;
+      });
+    });
+  }
 
   updateComponentBuildConditionals(compilerCtx.moduleMap, buildCtx.components);
   resolveComponentDependencies(buildCtx.components);
@@ -108,10 +159,71 @@ export const runTsProgram = async (
   validateTranspiledComponents(config, buildCtx);
 
   if (buildCtx.hasError) {
-    return false;
+    return [];
   }
 
-  // create the components.d.ts file and write to disk
+  return emittedDts;
+};
+
+export interface ValidateTypesResult {
+  hasTypesChanged: boolean;
+  needsRebuild: boolean;
+}
+
+/**
+ * Generate types and run semantic validation AFTER components.d.ts exists on disk
+ */
+export const validateTypesAfterGeneration = async (
+  config: d.ValidatedConfig,
+  compilerCtx: d.CompilerCtx,
+  buildCtx: d.BuildCtx,
+  tsBuilder: ts.BuilderProgram,
+  emittedDts: string[],
+): Promise<ValidateTypesResult> => {
+  const tsProgram = tsBuilder.getProgram();
+  const typesOutputTarget = config.outputTargets.filter(isOutputTargetDistTypes);
+
+  // Check if components.d.ts already exists
+  const componentsDtsPath = join(config.srcDir, 'components.d.ts');
+  const componentsDtsExistedBefore = await compilerCtx.fs.access(componentsDtsPath);
+
+  // If components.d.ts doesn't exist yet, generate it and signal that a rebuild is needed.
+  // The current TS program was created without components.d.ts, so it can't provide
+  // accurate type checking. We need a fresh TS program that includes components.d.ts.
+  if (!componentsDtsExistedBefore) {
+    await generateAppTypes(config, compilerCtx, buildCtx, 'src');
+    // Signal that we need to rebuild with a fresh TS program
+    return { hasTypesChanged: true, needsRebuild: true };
+  }
+
+  // components.d.ts existed, so the TS program has full type information.
+  // Run semantic validation on user source files.
+  if (config.validateTypes) {
+    const sourceFiles = tsProgram.getSourceFiles().filter((sf) => {
+      const fileName = normalizePath(sf.fileName);
+      return (
+        !fileName.includes('node_modules') &&
+        !fileName.endsWith('.d.ts') &&
+        fileName.startsWith(normalizePath(config.srcDir))
+      );
+    });
+
+    for (const sourceFile of sourceFiles) {
+      const sourceSemanticDiagnostics = tsProgram.getSemanticDiagnostics(sourceFile);
+      const tsSemantic = loadTypeScriptDiagnostics(sourceSemanticDiagnostics);
+
+      if (config.devMode) {
+        tsSemantic.forEach((semanticDiagnostic) => {
+          if (semanticDiagnostic.code === '6133' || semanticDiagnostic.code === '6192') {
+            semanticDiagnostic.level = 'warn';
+          }
+        });
+      }
+      buildCtx.diagnostics.push(...tsSemantic);
+    }
+  }
+
+  // Update components.d.ts in case components changed
   const hasTypesChanged = await generateAppTypes(config, compilerCtx, buildCtx, 'src');
   if (typesOutputTarget.length > 0) {
     // copy src dts files that do not get emitted by the compiler
@@ -136,23 +248,7 @@ export const runTsProgram = async (
     await Promise.all(srcRootDtsFiles);
   }
 
-  // TODO(STENCIL-540): remove `hasTypesChanged` check and figure out how to generate types before
-  // executing the TS build program so we don't get semantic diagnostic errors about referencing the
-  // auto-generated `components.d.ts` file.
-  if (config.validateTypes && !hasTypesChanged) {
-    const tsSemantic = loadTypeScriptDiagnostics(tsBuilder.getSemanticDiagnostics());
-    if (config.devMode) {
-      tsSemantic.forEach((semanticDiagnostic) => {
-        // Unused variable errors become warnings in dev mode
-        if (semanticDiagnostic.code === '6133' || semanticDiagnostic.code === '6192') {
-          semanticDiagnostic.level = 'warn';
-        }
-      });
-    }
-    buildCtx.diagnostics.push(...tsSemantic);
-  }
-
-  return hasTypesChanged;
+  return { hasTypesChanged, needsRebuild: false };
 };
 
 /**

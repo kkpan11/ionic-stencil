@@ -30,7 +30,12 @@ export const generateRollupOutput = async (
       return {
         type: 'chunk',
         fileName: chunk.fileName,
-        map: chunk.map,
+        map: chunk.map
+          ? {
+              ...chunk.map,
+              sourcesContent: chunk.map.sourcesContent || [],
+            }
+          : undefined,
         code: chunk.code,
         moduleFormat: options.format,
         entryKey: chunk.name,

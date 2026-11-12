@@ -1,6 +1,8 @@
 import type { ConfigFlags } from '../cli/config-flags';
 import type { PrerenderUrlResults, PrintLine } from '../internal';
+import type { BuildCtx, CompilerCtx } from './stencil-private';
 import type { JsonDocs } from './stencil-public-docs';
+import type { ResolutionHandler } from './stencil-public-runtime';
 
 export * from './stencil-public-docs';
 
@@ -85,6 +87,14 @@ export interface StencilConfig {
   globalStyle?: string;
 
   /**
+   * Will generate {@link https://nodejs.org/api/packages.html#packages_exports export map} entry points
+   * for each component in the build when `true`.
+   *
+   * @default false
+   */
+  generateExportMaps?: boolean;
+
+  /**
    * When the hashFileNames config is set to true, and it is a production build,
    * the hashedFileNameLength config is used to determine how many characters the file name's hash should be.
    */
@@ -125,9 +135,12 @@ export interface StencilConfig {
   plugins?: any[];
 
   /**
-   * Generate js source map files for all bundles
+   * Generate js source map files for all bundles.
+   * Set to `true` to always generate source maps, `false` to never generate source maps.
+   * Set to `'dev'` to only generate source maps when the `--dev` flag is passed.
+   * Defaults to `'dev'`.
    */
-  sourceMap?: boolean;
+  sourceMap?: boolean | 'dev';
 
   /**
    * The srcDir config specifies the directory which should contain the source typescript files
@@ -142,6 +155,15 @@ export interface StencilConfig {
    * This behavior defaults to `true`, but may be opted-out of by setting this flag to `false`.
    */
   transformAliasedImportPaths?: boolean;
+  /**
+   * When `true`, Stencil will suppress diagnostics which warn about public members using reserved names
+   * (for example, decorating a method named `focus` with `@Method()`). Defaults to `false`.
+   */
+  suppressReservedPublicNameWarnings?: boolean;
+  /**
+   * When `true`, Stencil will suppress diagnostics which warn about event names conflicting with native DOM event names. Defaults to `false`.
+   */
+  suppressReservedEventNameWarnings?: boolean;
   /**
    * When `true`, we will validate a project's `package.json` based on the output target the user has designated
    * as `isPrimaryPackageOutputTarget: true` in their Stencil config.
@@ -263,9 +285,19 @@ export interface StencilConfig {
    */
   env?: { [prop: string]: string | undefined };
 
+  docs?: StencilDocsConfig;
+
   globalScript?: string;
   srcIndexHtml?: string;
-  watch?: boolean;
+  /**
+   * Configuration for Stencil's integrated testing (Jest + Puppeteer).
+   *
+   * @deprecated Integrated testing support will be removed in Stencil v5. Migrate spec tests to
+   * [`@stencil/vitest`](https://github.com/stenciljs/vitest) and e2e / browser tests to either
+   * [`@stencil/vitest`](https://github.com/stenciljs/vitest) or
+   * [`@stencil/playwright`](https://github.com/stenciljs/playwright).
+   * See https://github.com/stenciljs/core/issues/6584 for full discussion and migration guidance.
+   */
   testing?: TestingConfig;
   maxConcurrentWorkers?: number;
   preamble?: string;
@@ -286,12 +318,50 @@ export interface StencilConfig {
   sys?: CompilerSystem;
   tsconfig?: string;
   validateTypes?: boolean;
+
+  /**
+   * Sets whether Stencil will watch for changes in the source files and rebuild the project automatically.
+   * @default true
+   */
+  watch?: boolean;
+  /**
+   * External directories to watch for changes. By default, Stencil will watch the root and {@link StencilConfig.srcDir}
+   * directory for changes. If you want to watch additional directories, including e.g. `node_modules`, you can add them here.
+   * @default []
+   */
+  watchExternalDirs?: string[];
   /**
    * An array of RegExp patterns that are matched against all source files before adding
    * to the watch list in watch mode. If the file path matches any of the patterns, when it
    * is updated, it will not trigger a re-run of tests.
    */
   watchIgnoredRegex?: RegExp | RegExp[];
+
+  /**
+   * An array of component tag names to exclude from production builds.
+   * Useful to remove test, demo or experimental components from final output.
+   *
+   * **Note:** Exclusion only applies to production builds (default, or when `--prod` is used).
+   * Development builds (with `--dev` flag) will include all components to support local testing.
+   *
+   * Supports glob patterns for matching multiple components:
+   * - `['demo-*']` - Excludes all components starting with "demo-"
+   * - `['*-test', '*-demo']` - Excludes components ending with "-test" or "-demo"
+   * - `['my-component']` - Excludes a specific component
+   *
+   * Components matching these patterns will be completely excluded from all output targets.
+   *
+   * @example
+   * ```ts
+   * export const config: Config = {
+   *   excludeComponents: ['demo-*', 'test-component', '*-internal'],
+   * };
+   * ```
+   *
+   * @default []
+   */
+  excludeComponents?: string[];
+
   /**
    * Set whether unused dependencies should be excluded from the built output.
    */
@@ -327,6 +397,7 @@ interface ConfigExtrasBase {
    * It is possible to assign data to the actual `<script>` element's `data-opts` property,
    * which then gets passed to Stencil's initial bootstrap. This feature is only required
    * for very special cases and rarely needed. Defaults to `false`.
+   * @deprecated This option has been deprecated and will be removed in a future major version of Stencil.
    */
   scriptDataOpts?: boolean;
 
@@ -341,18 +412,38 @@ interface ConfigExtrasBase {
   /**
    * Enables the tagNameTransform option of `defineCustomElements()`, so the component tagName
    * can be customized at runtime. Defaults to `false`.
+   * @deprecated This option has been deprecated in favour of `setTagTransformer` and `transformTag`. It will be removed in a future major version of Stencil.
    */
   tagNameTransform?: boolean;
+
+  /**
+   * Adds `transformTag` calls to css strings and querySelector(All) calls
+   */
+  additionalTagTransformers?: boolean | 'prod';
 
   // TODO(STENCIL-1086): remove this option when it's the default behavior
   /**
    * Experimental flag.
    * Updates the behavior of scoped components to align more closely with the behavior of the native
    * Shadow DOM when using `slot`s.
-   *
    * Defaults to `false`.
    */
   experimentalScopedSlotChanges?: boolean;
+
+  /**
+   * By default Stencil turns the stylesheet provided to `globalStyle` into a constructable stylesheet
+   * and adds it to each component when rendered on the client which can be useful for sharing styles
+   * efficiently across components.
+   *
+   * If you want Stencil to also add the `globalStyle` to each component when rendering on the server
+   * then set this to `true`. If your `globalStyle` sheet is large then doing this may bloat the size
+   * of your SSR output when using declarative-shadow-dom.
+   *
+   * Setting this to `false` will prevent Stencil from adding any `globalStyle` to each component.
+   *
+   * Defaults to `'client'`.
+   */
+  addGlobalStyleToComponents?: boolean | 'client';
 }
 
 // TODO(STENCIL-914): delete this interface when `experimentalSlotFixes` is the default behavior
@@ -418,6 +509,7 @@ export interface Config extends StencilConfig {
   suppressLogs?: boolean;
   profile?: boolean;
   tsCompilerOptions?: any;
+  tsWatchOptions?: any;
   _isValidated?: boolean;
   _isTesting?: boolean;
 }
@@ -505,7 +597,9 @@ type StrictConfigFields = keyof Pick<
  * about the data from a type-safety perspective, this type is intended to be used throughout the codebase once
  * validations have occurred at runtime.
  */
-export type ValidatedConfig = RequireFields<Config, StrictConfigFields>;
+export type ValidatedConfig = RequireFields<Config, StrictConfigFields> & {
+  sourceMap: boolean;
+};
 
 export interface HydratedFlag {
   /**
@@ -580,6 +674,12 @@ export interface StencilDevServerConfig {
    * Sets the server's port. Defaults to `3333`.
    */
   port?: number;
+  /**
+   * When set to `true`, the dev server will exit with an error if the specified port is already in use.
+   * When set to `false`, the dev server will automatically try the next available port.
+   * Defaults to `false`.
+   */
+  strictPort?: boolean;
   /**
    * When files are watched and updated, by default the dev server will use `hmr` (Hot Module Replacement)
    * to update the page without a full page refresh. To have the page do a full refresh use `pageReload`.
@@ -888,6 +988,34 @@ export interface HydrateDocumentOptions {
    * Sets `navigator.userAgent`
    */
   userAgent?: string;
+  /**
+   * Configure how Stencil serializes the components shadow root.
+   * - If set to `declarative-shadow-dom` the component will be rendered within a Declarative Shadow DOM.
+   * - If set to `scoped` Stencil will render the contents of the shadow root as a `scoped: true` component
+   *   and the shadow DOM will be created during client-side hydration.
+   * - Alternatively you can mix and match the two by providing an object with `declarative-shadow-dom` and `scoped` keys,
+   * the value arrays containing the tag names of the components that should be rendered in that mode.
+   *
+   * Examples:
+   * - `{ 'declarative-shadow-dom': ['my-component-1', 'another-component'], default: 'scoped' }`
+   * Render all components as `scoped` apart from `my-component-1` and `another-component`
+   * -  `{ 'scoped': ['an-option-component'], default: 'declarative-shadow-dom' }`
+   * Render all components within `declarative-shadow-dom` apart from `an-option-component`
+   * - `'scoped'` Render all components as `scoped`
+   * - `false` disables shadow root serialization
+   *
+   * *NOTE* `true` has been deprecated in favor of `declarative-shadow-dom` and `scoped`
+   * @default 'declarative-shadow-dom'
+   */
+  serializeShadowRoot?:
+    | 'declarative-shadow-dom'
+    | 'scoped'
+    | {
+        'declarative-shadow-dom'?: string[];
+        scoped?: string[];
+        default: 'declarative-shadow-dom' | 'scoped';
+      }
+    | boolean;
 }
 
 export interface SerializeDocumentOptions extends HydrateDocumentOptions {
@@ -931,6 +1059,17 @@ export interface SerializeDocumentOptions extends HydrateDocumentOptions {
    * Remove HTML comments. Defaults to `true`.
    */
   removeHtmlComments?: boolean;
+  /**
+   * The `fullDocument` flag determines the format of the rendered output. Set it to true to
+   * generate a complete HTML document, or false to render only the component.
+   * @default true
+   */
+  fullDocument?: boolean;
+  /**
+   * Style modes to render the component in.
+   * @see https://stenciljs.com/docs/styling#style-modes
+   */
+  modes?: ResolutionHandler[];
 }
 
 export interface HydrateFactoryOptions extends SerializeDocumentOptions {
@@ -1281,7 +1420,7 @@ export interface ResolveModuleIdOptions {
   moduleId: string;
   containingFile?: string;
   exts?: string[];
-  packageFilter?: (pkg: any) => void;
+  packageFilter?: (pkg: any, pkgFile: string) => any;
 }
 
 export interface ResolveModuleIdResults {
@@ -1624,6 +1763,11 @@ export interface CopyTask {
    */
   dest?: string;
   /**
+   * An optional array of glob patterns to exclude from the copy operation.
+   * @default ['**\/__mocks__/**', '**\/__fixtures__/**', '**\/dist/**', '**\/.{idea,git,cache,output,temp}/**', '**\/.ds_store', '**\/.gitignore', '**\/desktop.ini', '**\/thumbs.db']
+   */
+  ignore?: string[];
+  /**
    * Whether or not Stencil should issue warnings if it cannot find the
    * specified source files or directories. Defaults to `false`.
    *
@@ -1673,6 +1817,35 @@ export interface CopyTask {
   keepDirStructure?: boolean;
 }
 
+/**
+ * Configuration for generating documentation from Stencil components.
+ */
+export interface StencilDocsConfig {
+  /**
+   * Options for processing and rendering Markdown documentation files.
+   */
+  markdown?: {
+    /**
+     * Styling for how the target component will be represented within documentation (e.g., in component diagrams).
+     */
+    targetComponent?: {
+      /**
+       * Background color used for nodes representing the component in diagrams (e.g., Mermaid graphs).
+       * Use standard color names or hex codes.
+       * @example '#f0f0f0' (light gray)
+       */
+      background?: string;
+
+      /**
+       * Text color used within nodes representing the component in diagrams (e.g., Mermaid graphs).
+       * Use standard color names or hex codes.
+       * @example '#333' (dark gray)
+       */
+      textColor?: string;
+    };
+  };
+}
+
 // TODO(STENCIL-882): Remove this interface [BREAKING_CHANGE]
 export interface BundlingConfig {
   /**
@@ -1685,22 +1858,26 @@ export interface BundlingConfig {
 }
 
 export interface NodeResolveConfig {
-  module?: boolean;
-  jsnext?: boolean;
-  main?: boolean;
+  exportConditions?: string[];
   browser?: boolean;
-  extensions?: string[];
-  preferBuiltins?: boolean;
+  moduleDirectories?: string[];
+  modulePaths?: string[];
+  dedupe?: string[] | ((importee: string) => boolean);
+  extensions?: readonly string[];
   jail?: string;
-  only?: Array<string | RegExp>;
+  mainFields?: readonly string[];
   modulesOnly?: boolean;
+  preferBuiltins?: boolean | ((module: string) => boolean);
+  resolveOnly?: ReadonlyArray<string | RegExp> | null | ((module: string) => boolean);
+  rootDir?: string;
+  allowExportsFolderMapping?: boolean;
 
   // TODO(STENCIL-1107): Remove this field [BREAKING_CHANGE]
   /**
    * @see https://github.com/browserify/resolve#resolveid-opts-cb
    * @deprecated the `customResolveOptions` field is no longer honored in future versions of
    * `@rollup/plugin-node-resolve`. If you are currently using it, please open a new issue in the Stencil repo to
-   * describe your use case & provide input (https://github.com/ionic-team/stencil/issues/new/choose)
+   * describe your use case & provide input (https://github.com/stenciljs/core/issues/new/choose)
    */
   customResolveOptions?: {
     basedir?: string;
@@ -1726,19 +1903,41 @@ export interface RollupInputOptions {
   context?: string;
   moduleContext?: ((id: string) => string) | { [id: string]: string };
   treeshake?: boolean;
+  maxParallelFileOps?: number;
+  external?:
+    | (string | RegExp)[]
+    | string
+    | RegExp
+    | ((source: string, importer: string | undefined, isResolved: boolean) => boolean | null | undefined);
 }
 
 export interface RollupOutputOptions {
   globals?: { [name: string]: string } | ((name: string) => string);
 }
 
+/**
+ * @deprecated Integrated testing support will be removed in Stencil v5. Migrate spec tests to
+ * [`@stencil/vitest`](https://github.com/stenciljs/vitest) and e2e / browser tests to either
+ * [`@stencil/vitest`](https://github.com/stenciljs/vitest) or
+ * [`@stencil/playwright`](https://github.com/stenciljs/playwright).
+ * See https://github.com/stenciljs/core/issues/6584 for full discussion and migration guidance.
+ */
 export interface Testing {
   run(opts: TestingRunOptions): Promise<boolean>;
   destroy(): Promise<void>;
 }
 
+export declare type Path = string;
+export declare type TransformerConfig = [string, Record<string, unknown>];
+
 /**
  * Options for initiating a run of Stencil tests (spec and/or end-to-end)
+ *
+ * @deprecated Integrated testing support will be removed in Stencil v5. Migrate spec tests to
+ * [`@stencil/vitest`](https://github.com/stenciljs/vitest) and e2e / browser tests to either
+ * [`@stencil/vitest`](https://github.com/stenciljs/vitest) or
+ * [`@stencil/playwright`](https://github.com/stenciljs/playwright).
+ * See https://github.com/stenciljs/core/issues/6584 for full discussion and migration guidance.
  */
 export interface TestingRunOptions {
   /**
@@ -1759,6 +1958,13 @@ export interface TestingRunOptions {
   updateScreenshot?: boolean;
 }
 
+/**
+ * @deprecated Integrated testing support will be removed in Stencil v5. Migrate spec tests to
+ * [`@stencil/vitest`](https://github.com/stenciljs/vitest) and e2e / browser tests to either
+ * [`@stencil/vitest`](https://github.com/stenciljs/vitest) or
+ * [`@stencil/playwright`](https://github.com/stenciljs/playwright).
+ * See https://github.com/stenciljs/core/issues/6584 for full discussion and migration guidance.
+ */
 export interface JestConfig {
   /**
    * This option tells Jest that all imported modules in your tests should be mocked automatically.
@@ -1770,7 +1976,7 @@ export interface JestConfig {
    * By default, Jest runs all tests and produces all errors into the console upon completion.
    * The bail config option can be used here to have Jest stop running tests after the first failure. Default: false
    */
-  bail?: boolean;
+  bail?: boolean | number;
 
   /**
    * The directory where Jest should store its cached dependency information. Jest attempts to scan your dependency tree once (up-front)
@@ -1856,8 +2062,8 @@ export interface JestConfig {
   reporters?: any;
   resetMocks?: boolean;
   resetModules?: boolean;
-  resolver?: string;
-  restoreMocks?: string;
+  resolver?: Path | null;
+  restoreMocks?: boolean;
   rootDir?: string;
   roots?: any[];
   runner?: string;
@@ -1877,18 +2083,29 @@ export interface JestConfig {
   testMatch?: string[];
   testPathIgnorePatterns?: string[];
   testPreset?: string;
-  testRegex?: string;
+  testRegex?: string[];
   testResultsProcessor?: string;
   testRunner?: string;
   testURL?: string;
   timers?: string;
-  transform?: { [key: string]: string };
+  transform?: {
+    [regex: string]: Path | TransformerConfig;
+  };
   transformIgnorePatterns?: any[];
   unmockedModulePathPatterns?: any[];
   verbose?: boolean;
   watchPathIgnorePatterns?: any[];
 }
 
+/**
+ * Configuration for Stencil's integrated testing (Jest + Puppeteer).
+ *
+ * @deprecated Integrated testing support will be removed in Stencil v5. Migrate spec tests to
+ * [`@stencil/vitest`](https://github.com/stenciljs/vitest) and e2e / browser tests to either
+ * [`@stencil/vitest`](https://github.com/stenciljs/vitest) or
+ * [`@stencil/playwright`](https://github.com/stenciljs/playwright).
+ * See https://github.com/stenciljs/core/issues/6584 for full discussion and migration guidance.
+ */
 export interface TestingConfig extends JestConfig {
   /**
    * The `allowableMismatchedPixels` value is used to determine an acceptable
@@ -1930,6 +2147,7 @@ export interface TestingConfig extends JestConfig {
 
   /**
    * Path to a Chromium or Chrome executable to run instead of the bundled Chromium.
+   * @default env.PUPPETEER_EXECUTABLE_PATH || env.CHROME_PATH || puppeteer.computeExecutablePath()
    */
   browserExecutablePath?: string;
 
@@ -1939,18 +2157,17 @@ export interface TestingConfig extends JestConfig {
   browserWSEndpoint?: string;
 
   /**
-   * Whether to run browser e2e tests in headless mode.
-   *
-   * Starting with Chrome v112, a new headless mode was introduced.
-   * The new headless mode unifies the "headful" and "headless" code paths in the Chrome distributable.
-   *
-   * To enable the "new" headless mode, a string value of "new" must be provided.
-   * To use the "old" headless mode, a boolean value of `true` must be provided.
-   * To use "headful" mode, a boolean value of `false` must be provided.
-   *
-   * Defaults to true.
+   * The browser channel to use for e2e tests (stable, beta, dev or canary).
+   * @default 'chrome'
    */
-  browserHeadless?: boolean | 'new';
+  browserChannel?: 'chrome' | 'chrome-beta' | 'chrome-dev' | 'chrome-canary';
+
+  /**
+   * Whether to run browser e2e tests in headless mode using Chrome Headless Shell
+   * @ref https://developer.chrome.com/blog/chrome-headless-shell
+   * @default shell
+   */
+  browserHeadless?: boolean | 'shell';
 
   /**
    * Slows down e2e browser operations by the specified amount of milliseconds.
@@ -1996,6 +2213,13 @@ export interface TestingConfig extends JestConfig {
   waitBeforeScreenshot?: number;
 }
 
+/**
+ * @deprecated Integrated testing support will be removed in Stencil v5. Migrate spec tests to
+ * [`@stencil/vitest`](https://github.com/stenciljs/vitest) and e2e / browser tests to either
+ * [`@stencil/vitest`](https://github.com/stenciljs/vitest) or
+ * [`@stencil/playwright`](https://github.com/stenciljs/playwright).
+ * See https://github.com/stenciljs/core/issues/6584 for full discussion and migration guidance.
+ */
 export interface EmulateConfig {
   /**
    * Predefined device descriptor name, such as "iPhone X" or "Nexus 10".
@@ -2011,6 +2235,13 @@ export interface EmulateConfig {
   viewport?: EmulateViewport;
 }
 
+/**
+ * @deprecated Integrated testing support will be removed in Stencil v5. Migrate spec tests to
+ * [`@stencil/vitest`](https://github.com/stenciljs/vitest) and e2e / browser tests to either
+ * [`@stencil/vitest`](https://github.com/stenciljs/vitest) or
+ * [`@stencil/playwright`](https://github.com/stenciljs/playwright).
+ * See https://github.com/stenciljs/core/issues/6584 for full discussion and migration guidance.
+ */
 export interface EmulateViewport {
   /**
    * Page width in pixels.
@@ -2228,19 +2459,36 @@ export interface OutputTargetHydrate extends OutputTargetBase {
   type: 'dist-hydrate-script';
   dir?: string;
   /**
+   * Whether to generate a package.json file in the hydrate output directory.
+   * Defaults to `true`
+   * @deprecated
+   * In the next major release, the `package.json` file will be completely removed from the `dist-hydrate-script` output (use `exports` from your library's main `package.json`)
+   */
+  generatePackageJson?: boolean;
+  /**
    * Module IDs that should not be bundled into the script.
    * By default, all node builtin's, such as `fs` or `path`
    * will be considered "external" and not bundled.
    */
   external?: string[];
   empty?: boolean;
+  minify?: boolean;
 }
 
 export interface OutputTargetCustom extends OutputTargetBase {
   type: 'custom';
   name: string;
+  /**
+   * Indicate when the output target should be executed.
+   *
+   * - `"onBuildOnly"`: Executed only when `stencil build` is called without `--watch`.
+   * - `"always"`: Executed on every build, including in `watch` mode.
+   *
+   * Defaults to "always".
+   */
+  taskShouldRun?: 'onBuildOnly' | 'always';
   validate?: (config: Config, diagnostics: Diagnostic[]) => void;
-  generator: (config: Config, compilerCtx: any, buildCtx: any, docs: any) => Promise<void>;
+  generator: (config: Config, compilerCtx: CompilerCtx, buildCtx: BuildCtx, docs: JsonDocs) => Promise<void>;
   copy?: CopyTask[];
 }
 
@@ -2273,6 +2521,17 @@ export interface OutputTargetDocsReadme extends OutputTargetBase {
    */
   dir?: string;
   dependencies?: boolean;
+  /**
+   * Controls how READMEs are written to the destination directory.
+   *
+   * - `true`: Always overwrite the destination README with the full content.
+   * - `false` (default): Only update the autogenerated content, preserving existing custom content above it.
+   * - `'if-missing'`: Write the full README only if no file exists at the destination.
+   *
+   * This option enables workflows requiring consistent, idempotent output across builds,
+   * and supports setups where custom documentation may need to coexist or vary between environments.
+   */
+  overwriteExisting?: boolean | 'if-missing';
   footer?: string;
   strict?: boolean;
 }
@@ -2302,6 +2561,17 @@ export interface OutputTargetDocsJson extends OutputTargetBase {
    * they'll be included in the output, facilitating their documentation.
    */
   supplementalPublicTypes?: string;
+}
+
+export interface OutputTargetDocsCustomElementsManifest extends OutputTargetBase {
+  type: 'docs-custom-elements-manifest';
+
+  /**
+   * The file path where the custom-elements.json manifest will be written.
+   * Defaults to 'custom-elements.json' in the root directory.
+   */
+  file: string;
+  strict?: boolean;
 }
 
 export interface OutputTargetDocsCustom extends OutputTargetBase {
@@ -2374,6 +2644,42 @@ export interface OutputTargetDistCustomElements extends OutputTargetValidationCo
    * If omitted, no auto-definition behavior or re-exporting will happen.
    */
   customElementsExportBehavior?: CustomElementsExportBehavior;
+  /**
+   * Generate an auto-loader script that uses MutationObserver to lazily load
+   * and define custom elements as they appear in the DOM.
+   *
+   * When set to `true`, generates a `loader.js` file that auto-starts on import.
+   * Can also be configured with an object for more control:
+   * - `fileName`: Custom filename for the loader (default: 'loader.js')
+   * - `autoStart`: Whether to auto-start the loader on import (default: true)
+   *
+   * @example
+   * ```typescript
+   * // Simple usage
+   * autoLoader: true
+   *
+   * // With options
+   * autoLoader: {
+   *   fileName: 'my-loader.js',
+   *   autoStart: false
+   * }
+   * ```
+   */
+  autoLoader?:
+    | boolean
+    | {
+        /**
+         * Custom filename for the generated loader script.
+         * @default 'loader.js'
+         */
+        fileName?: string;
+        /**
+         * Whether to automatically start the loader when the script is imported.
+         * If false, you must call `start()` manually.
+         * @default true
+         */
+        autoStart?: boolean;
+      };
 }
 
 /**
@@ -2506,6 +2812,7 @@ export type OutputTarget =
   | OutputTargetDocsCustom
   | OutputTargetDocsReadme
   | OutputTargetDocsVscode
+  | OutputTargetDocsCustomElementsManifest
   | OutputTargetWww
   | OutputTargetHydrate
   | OutputTargetStats
@@ -2632,9 +2939,9 @@ export interface ResolveModuleOptions {
 
 export interface PrerenderStartOptions {
   buildId?: string;
-  hydrateAppFilePath: string;
-  componentGraph: BuildResultsComponentGraph;
-  srcIndexHtmlPath: string;
+  hydrateAppFilePath?: string;
+  componentGraph?: BuildResultsComponentGraph;
+  srcIndexHtmlPath?: string;
 }
 
 export interface PrerenderResults {
@@ -2859,6 +3166,16 @@ export interface TranspileOptions {
    */
   paths?: { [key: string]: string[] };
   /**
+   * JSX mode for TypeScript compilation. Can be 'react', 'react-jsx', 'react-jsxdev', etc.
+   * Same as the `jsx` TypeScript compiler option.
+   */
+  jsx?: number;
+  /**
+   * Module specifier for JSX factory. Used with automatic JSX runtime.
+   * Same as the `jsxImportSource` TypeScript compiler option.
+   */
+  jsxImportSource?: string;
+  /**
    * Passed in Stencil Compiler System, otherwise falls back to the internal in-memory only system.
    */
   sys?: CompilerSystem;
@@ -2867,6 +3184,14 @@ export interface TranspileOptions {
    * `tsconfig.json` to relative paths.
    */
   transformAliasedImportPaths?: boolean;
+  /**
+   * List of tags to transform, by default only the incoming component tag is transformed
+   */
+  tagsToTransform?: string[];
+  /**
+   * Adds `transformTag` calls to css strings and querySelector(All) calls
+   */
+  additionalTagTransformers?: boolean;
 }
 
 export type CompileTarget =

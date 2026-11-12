@@ -1,4 +1,10 @@
-import { setAccessor } from '../set-accessor';
+import { BUILD } from '@app-data';
+import { getHostRef, registerHost } from '@platform';
+
+import { HOST_FLAGS } from '../../../utils/constants';
+import { VNODE_FLAGS } from '../../runtime-constants';
+import { newVNode } from '../h';
+import { parseClassList, setAccessor } from '../set-accessor';
 
 describe('setAccessor for custom elements', () => {
   let elm: any;
@@ -145,6 +151,27 @@ describe('setAccessor for custom elements', () => {
     });
   });
 
+  it('should set part as an attribute on a custom element', () => {
+    setAccessor(elm, 'part', undefined, 'my-part', false, 0);
+    expect(elm.getAttribute('part')).toBe('my-part');
+  });
+
+  it('should update part attribute on a custom element', () => {
+    setAccessor(elm, 'part', undefined, 'old-part', false, 0);
+    expect(elm.getAttribute('part')).toBe('old-part');
+
+    setAccessor(elm, 'part', 'old-part', 'new-part', false, 0);
+    expect(elm.getAttribute('part')).toBe('new-part');
+  });
+
+  it('should remove part attribute when value is null', () => {
+    setAccessor(elm, 'part', undefined, 'my-part', false, 0);
+    expect(elm.getAttribute('part')).toBe('my-part');
+
+    setAccessor(elm, 'part', 'my-part', null, false, 0);
+    expect(elm.hasAttribute('part')).toBe(false);
+  });
+
   it('should set object property to child', () => {
     const oldValue: any = 'someval';
     const newValue: any = { some: 'obj' };
@@ -245,6 +272,56 @@ describe('setAccessor for custom elements', () => {
     expect(elm.myprop).toBeUndefined();
 
     expect(elm).toEqualAttributes({});
+  });
+
+  it('should remove a reflected boolean attribute even if it holds a stale literal string', () => {
+    // e.g. static/SSR markup wrote `flag="true"` before the component upgraded;
+    // `flags` carries VNODE_FLAGS.isHost because this is how `@Prop({ reflect: true })`
+    // values are written back onto the host element
+    elm.setAttribute('flag', 'true');
+
+    setAccessor(elm, 'flag', true, false, false, VNODE_FLAGS.isHost);
+
+    expect(elm.hasAttribute('flag')).toBe(false);
+  });
+
+  it('should still remove a reflected boolean attribute that holds the canonical empty string', () => {
+    elm.setAttribute('flag', '');
+
+    setAccessor(elm, 'flag', true, false, false, VNODE_FLAGS.isHost);
+
+    expect(elm.hasAttribute('flag')).toBe(false);
+  });
+
+  it('should never remove enumerated attributes outright when reflected as false', () => {
+    // enumerated (tri-state) attributes must stay present - `draggable` is a native
+    // IDL property, so its value gets updated to "false" via the property setter
+    // (still present, not removed); the others aren't touched at all here and so
+    // keep their original literal value
+    for (const [attrName, expectedValue] of [
+      ['draggable', 'false'],
+      ['contenteditable', 'true'],
+      ['spellcheck', 'true'],
+      ['aria-hidden', 'true'],
+    ]) {
+      const enumElm = document.createElement('my-tag');
+      enumElm.setAttribute(attrName, 'true');
+
+      setAccessor(enumElm, attrName, true, false, false, VNODE_FLAGS.isHost);
+
+      expect(enumElm.hasAttribute(attrName)).toBe(true);
+      expect(enumElm.getAttribute(attrName)).toBe(expectedValue);
+    }
+  });
+
+  it('should preserve a stale literal "true" for non-host (non-reflected) writes, matching prior behavior', () => {
+    // no VNODE_FLAGS.isHost set here - e.g. an author writing `<div flag={false}>`
+    // by hand in JSX on some element that isn't the component's own host
+    elm.setAttribute('flag', 'true');
+
+    setAccessor(elm, 'flag', true, false, false, 0);
+
+    expect(elm.getAttribute('flag')).toBe('true');
   });
 
   it('should add aria role attribute', () => {
@@ -598,6 +675,10 @@ describe('setAccessor for inputs', () => {
 });
 
 describe('setAccessor for standard html elements', () => {
+  beforeEach(() => {
+    BUILD.hydrateClientSide = true;
+  });
+
   describe('simple global attributes', () => {
     it('should not add attribute when prop is undefined or null', () => {
       const inputElm = document.createElement('section');
@@ -789,6 +870,91 @@ describe('setAccessor for standard html elements', () => {
       setAccessor(elm, 'class', 'md', '', false, 0);
       expect(elm.className).toEqual('');
     });
+
+    it('should add scope classes on initial render if `s-si` set', () => {
+      const elm = document.createElement('section');
+
+      // not s-si set
+      setAccessor(elm, 'class', 'a-scope-id', undefined, false, 0, true);
+      expect(elm.className).toEqual('');
+
+      (elm as any)['s-si'] = 'a-scope-id';
+
+      setAccessor(elm, 'class', '', undefined, false, 0, true);
+      expect(elm.className).toEqual('a-scope-id');
+
+      setAccessor(
+        elm,
+        'class',
+        'a-scope-id-something a-scope-id-something-else unrelated-old-thing',
+        undefined,
+        false,
+        0,
+        true,
+      );
+      expect(elm.className).toEqual('a-scope-id a-scope-id-something a-scope-id-something-else');
+
+      elm.className = '';
+      setAccessor(elm, 'class', 'something-old', 'something-new', false, 0, true);
+      expect(elm.className).toEqual('something-new a-scope-id');
+
+      elm.className = '';
+      setAccessor(elm, 'class', 'something-old a-scope-id-something', 'something-new', false, 0, true);
+      expect(elm.className).toEqual('something-new a-scope-id a-scope-id-something');
+
+      // just check it reverts to normal behavior after initial render
+      elm.className = '';
+      setAccessor(elm, 'class', 'something-old a-scope-id-something', 'something-new', false, 0);
+      expect(elm.className).toEqual('something-new');
+    });
+
+    describe('hydrated child component', () => {
+      // A child component that rendered its host as <Host class="own">, e.g. before its
+      // parent was defined in a custom elements build
+      const renderedChild = (tagName = 'cmp-child') => {
+        const elm = document.createElement(tagName) as any;
+        registerHost(elm, { $flags$: 0, $tagName$: tagName });
+        const hostRef = getHostRef(elm);
+        hostRef.$flags$ |= HOST_FLAGS.hasRendered;
+        hostRef.$vnode$ = newVNode(null, null);
+        hostRef.$vnode$.$attrs$ = { class: 'own own-state' };
+        elm.className = 'parent-old own own-state sc-cmp-child hydrated';
+        return elm;
+      };
+      // The old class the hydration seeds for the child: its full server `className`
+      const serverClassName = 'parent-old own own-state sc-cmp-child hydrated';
+
+      it('should keep the classes of its own host when the parent sets no class on initial render', () => {
+        const elm = renderedChild();
+        setAccessor(elm, 'class', serverClassName, undefined, false, 0, true);
+        expect(elm.className).toEqual('own own-state hydrated');
+      });
+
+      it('should keep the classes of its own host next to the classes of the parent on initial render', () => {
+        const elm = renderedChild();
+        setAccessor(elm, 'class', serverClassName, 'parent-new', false, 0, true);
+        expect(elm.className).toEqual('own own-state hydrated parent-new');
+      });
+
+      it('should keep the classes of its own host only on initial render', () => {
+        const elm = renderedChild();
+        setAccessor(elm, 'class', serverClassName, undefined, false, 0);
+        expect(elm.className).toEqual('');
+      });
+
+      it('should remove every old class when the child has not rendered yet', () => {
+        const elm = renderedChild();
+        getHostRef(elm).$flags$ &= ~HOST_FLAGS.hasRendered;
+        setAccessor(elm, 'class', serverClassName, undefined, false, 0, true);
+        expect(elm.className).toEqual('');
+      });
+
+      it('should remove every old class when the component renders its own host', () => {
+        const elm = renderedChild();
+        setAccessor(elm, 'class', serverClassName, undefined, false, VNODE_FLAGS.isHost, true);
+        expect(elm.className).toEqual('');
+      });
+    });
   });
 
   describe('style attribute', () => {
@@ -884,6 +1050,165 @@ describe('setAccessor for standard html elements', () => {
 
       setAccessor(elm, 'style', { margin: '20px' }, { margin: '30px', color: 'orange' }, false, 0);
       expect(elm.style.cssText).toEqual('margin: 30px; color: orange;');
+    });
+  });
+
+  it('uses setAttribute if element has not setter', () => {
+    const elm = document.createElement('button');
+    const spy = jest.spyOn(elm, 'setAttribute');
+    setAccessor(elm, 'form', undefined, 'some-form', false, 0);
+    expect(spy.mock.calls).toEqual([['form', 'some-form']]);
+
+    const elm2 = document.createElement('button');
+    const spy2 = jest.spyOn(elm2, 'setAttribute');
+    setAccessor(elm2, 'textContent', undefined, 'some-content', false, 0);
+    expect(spy2.mock.calls).toEqual([]);
+  });
+
+  describe('parseClassList', () => {
+    it('should parse class list', () => {
+      const classList = parseClassList('class1 class2 class3');
+      expect(classList).toEqual(['class1', 'class2', 'class3']);
+    });
+
+    it('should not parse class list', () => {
+      expect(parseClassList('')).toEqual([]);
+      // @ts-expect-error
+      expect(parseClassList()).toEqual([]);
+      expect(parseClassList(null)).toEqual([]);
+    });
+
+    it('should parse SVGAnimatedString', () => {
+      const classList = parseClassList({ baseVal: 'class1 class2 class3' } as SVGAnimatedString);
+      expect(classList).toEqual(['class1', 'class2', 'class3']);
+    });
+  });
+
+  describe('attr: prefix', () => {
+    let elm: any;
+
+    beforeEach(() => {
+      elm = document.createElement('my-tag');
+    });
+
+    it('should set value as attribute using setAttribute', () => {
+      setAccessor(elm, 'attr:data-value', undefined, 'hello', false, 0);
+      expect(elm.getAttribute('data-value')).toBe('hello');
+    });
+
+    it('should set true boolean as empty string attribute', () => {
+      setAccessor(elm, 'attr:hidden', undefined, true, false, 0);
+      expect(elm.getAttribute('hidden')).toBe('');
+    });
+
+    it('should remove attribute when value is false', () => {
+      elm.setAttribute('hidden', '');
+      setAccessor(elm, 'attr:hidden', true, false, false, 0);
+      expect(elm.hasAttribute('hidden')).toBe(false);
+    });
+
+    it('should remove attribute when value is null', () => {
+      elm.setAttribute('data-value', 'test');
+      setAccessor(elm, 'attr:data-value', 'test', null, false, 0);
+      expect(elm.hasAttribute('data-value')).toBe(false);
+    });
+
+    it('should remove attribute when value is undefined', () => {
+      elm.setAttribute('data-value', 'test');
+      setAccessor(elm, 'attr:data-value', 'test', undefined, false, 0);
+      expect(elm.hasAttribute('data-value')).toBe(false);
+    });
+
+    it('should force attribute even for properties that exist on element', () => {
+      const nativeElm = document.createElement('input');
+      const spy = jest.spyOn(nativeElm, 'setAttribute');
+      setAccessor(nativeElm, 'attr:id', undefined, 'my-id', false, 0);
+      expect(spy).toHaveBeenCalledWith('id', 'my-id');
+    });
+
+    it('should set string value as attribute', () => {
+      setAccessor(elm, 'attr:aria-label', undefined, 'Close', false, 0);
+      expect(elm.getAttribute('aria-label')).toBe('Close');
+    });
+
+    it('should update attribute value on re-render', () => {
+      setAccessor(elm, 'attr:data-count', undefined, '1', false, 0);
+      expect(elm.getAttribute('data-count')).toBe('1');
+      setAccessor(elm, 'attr:data-count', '1', '2', false, 0);
+      expect(elm.getAttribute('data-count')).toBe('2');
+    });
+
+    it('should not set attribute when old and new values are equal', () => {
+      const spy = jest.spyOn(elm, 'setAttribute');
+      setAccessor(elm, 'attr:data-value', 'same', 'same', false, 0);
+      expect(spy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('prop: prefix', () => {
+    let elm: any;
+
+    beforeEach(() => {
+      elm = document.createElement('my-tag');
+    });
+
+    it('should set value as property directly', () => {
+      setAccessor(elm, 'prop:myProp', undefined, 'hello', false, 0);
+      expect(elm.myProp).toBe('hello');
+    });
+
+    it('should set complex object as property', () => {
+      const obj = { foo: 'bar' };
+      setAccessor(elm, 'prop:data', undefined, obj, false, 0);
+      expect(elm.data).toBe(obj);
+    });
+
+    it('should set array as property', () => {
+      const arr = [1, 2, 3];
+      setAccessor(elm, 'prop:items', undefined, arr, false, 0);
+      expect(elm.items).toBe(arr);
+    });
+
+    it('should set null as property', () => {
+      elm.myProp = 'old';
+      setAccessor(elm, 'prop:myProp', 'old', null, false, 0);
+      expect(elm.myProp).toBe(null);
+    });
+
+    it('should set undefined as property', () => {
+      elm.myProp = 'old';
+      setAccessor(elm, 'prop:myProp', 'old', undefined, false, 0);
+      expect(elm.myProp).toBe(undefined);
+    });
+
+    it('should not set attribute when using prop: prefix', () => {
+      const spy = jest.spyOn(elm, 'setAttribute');
+      setAccessor(elm, 'prop:value', undefined, 'test', false, 0);
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('should force property even in SVG mode', () => {
+      setAccessor(elm, 'prop:myProp', undefined, 'hello', true, 0);
+      expect(elm.myProp).toBe('hello');
+    });
+
+    it('should not throw for read-only properties', () => {
+      Object.defineProperty(elm, 'readOnlyProp', {
+        get: () => 'fixed',
+        set: () => {
+          throw new Error('read-only');
+        },
+      });
+      expect(() => {
+        setAccessor(elm, 'prop:readOnlyProp', undefined, 'new-value', false, 0);
+      }).not.toThrow();
+    });
+
+    it('should not set property when old and new values are equal', () => {
+      elm.myProp = 'same';
+      setAccessor(elm, 'prop:myProp', 'same', 'same', false, 0);
+      // early return means property setter not called again
+      expect(elm.myProp).toBe('same');
     });
   });
 });

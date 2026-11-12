@@ -9,6 +9,7 @@ export const PROXY_CUSTOM_ELEMENT = '__stencil_proxyCustomElement';
 export const REGISTER_INSTANCE = '__stencil_registerInstance';
 export const REGISTER_HOST = '__stencil_registerHost';
 export const H = '__stencil_h';
+export const TRANSFORM_TAG = '__stencil_transformTag';
 
 export const RUNTIME_APIS = {
   createEvent: `createEvent as ${CREATE_EVENT}`,
@@ -21,12 +22,13 @@ export const RUNTIME_APIS = {
   proxyCustomElement: `proxyCustomElement as ${PROXY_CUSTOM_ELEMENT}`,
   registerHost: `registerHost as ${REGISTER_HOST}`,
   registerInstance: `registerInstance as ${REGISTER_INSTANCE}`,
+  transformTag: `transformTag as ${TRANSFORM_TAG}`,
 };
 
 /**
  * Update a Stencil Module entity to include a {@link RUNTIME_APIS} entry if it does not already exist.
  * This allows Stencil to keep `moduleFile` easily serializable, where this helper function treats the data structure
- * that stores {@link Module#coreRuntimeApis} similar to a JS `Set`.
+ * that stores {@link d.Module#coreRuntimeApis} similar to a JS `Set`.
  * @param moduleFile the Module entity to update
  * @param coreRuntimeApi the API to add to the provided module
  */
@@ -40,7 +42,7 @@ export const addCoreRuntimeApi = (moduleFile: d.Module, coreRuntimeApi: string):
  * Update a Stencil Module entity to include a {@link RUNTIME_APIS} entry for a specific output target, if it does not
  * already exist.
  * This allows Stencil to keep `moduleFile` easily serializable, where this helper function treats the data structure
- * that stores {@link Module#outputTargetCoreRuntimeApis} similar to a JS `Set`.
+ * that stores {@link d.Module#outputTargetCoreRuntimeApis} similar to a JS `Set`.
  * @param moduleFile the Module entity to update
  * @param outputTarget the output target to assign the provided runtime api under
  * @param coreRuntimeApi the API to add to the provided module

@@ -2,9 +2,20 @@ import sourceMapMerge from 'merge-source-map';
 import type { CompressOptions, MangleOptions, ManglePropertiesOptions, MinifyOptions, SourceMapOptions } from 'terser';
 import ts from 'typescript';
 
-import type { CompilerCtx, Config, OptimizeJsResult, SourceMap, SourceTarget } from '../../declarations';
+import type { CompilerCtx, OptimizeJsResult, SourceMap, SourceTarget, ValidatedConfig } from '../../declarations';
 import { minfyJsId } from '../../version';
 import { minifyJs } from './minify-js';
+
+/**
+ * Matches the comments that must survive minification. This extends Terser's default
+ * `comments: 'some'` behavior (`@license`, `@preserve`, etc.) with bundler directive
+ * comments — `@vite-ignore` and webpack magic comments (e.g. `webpackInclude:`,
+ * `webpackMode:`) — which downstream bundlers read from inside dynamic `import()`
+ * calls in the emitted output (e.g. `esm-es5`). Without this, Vite warns that the
+ * runtime's dynamic import cannot be analyzed and webpack ignores the lazy-loading
+ * hints entirely.
+ */
+const PRESERVED_COMMENTS = /^\**!|@preserve|@license|@cc_on|@vite-ignore|webpack[A-Z][a-zA-Z]+:/i;
 
 interface OptimizeModuleOptions {
   input: string;
@@ -24,7 +35,7 @@ interface OptimizeModuleOptions {
  * @returns the minified JavaScript result
  */
 export const optimizeModule = async (
-  config: Config,
+  config: ValidatedConfig,
   compilerCtx: CompilerCtx,
   opts: OptimizeModuleOptions,
 ): Promise<OptimizeJsResult> => {
@@ -124,7 +135,11 @@ export const optimizeModule = async (
  * @param prettyOutput if true, set the necessary flags to beautify the output of terser
  * @returns the minification options
  */
-export const getTerserOptions = (config: Config, sourceTarget: SourceTarget, prettyOutput: boolean): MinifyOptions => {
+export const getTerserOptions = (
+  config: ValidatedConfig,
+  sourceTarget: SourceTarget,
+  prettyOutput: boolean,
+): MinifyOptions => {
   const opts: MinifyOptions = {
     ie8: false,
     safari10: false,
@@ -135,6 +150,7 @@ export const getTerserOptions = (config: Config, sourceTarget: SourceTarget, pre
   if (sourceTarget === 'es5') {
     opts.ecma = opts.format.ecma = 5;
     opts.compress = false;
+    opts.format.comments = PRESERVED_COMMENTS;
     opts.mangle = {
       properties: getTerserManglePropertiesConfig(),
     };

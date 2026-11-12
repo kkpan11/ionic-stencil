@@ -1,6 +1,6 @@
 import { Component, State, h, Host, Listen } from '@stencil/core';
 import _ from 'lodash';
-import _es from 'lodash-es';
+import * as _es from 'lodash-es';
 import videojs from 'video.js';
 import { css } from 'linaria';
 import { MeString } from './interfaces';
@@ -32,11 +32,13 @@ export class AppRoot {
   @format something = '12';
   @State() first: string;
   @State() last: MeString;
+  @State() clothes: string;
 
   componentWillLoad() {
     const url = new URL(window.location.href);
     this.first = url.searchParams.get('first') || 'Stencil';
     this.last = url.searchParams.get('last') || 'JS';
+    this.clothes = url.searchParams.get('clothes') || 'life preservers';
     console.log('lodash', _.camelCase('LODASH'));
     console.log('lodash-es', _es.camelCase('LODASH-ES'));
   }
@@ -53,7 +55,7 @@ export class AppRoot {
   render() {
     return (
       <Host>
-        <prop-cmp first={this.first} lastName={this.last} mode="ios" />
+        <prop-cmp first={this.first} lastName={this.last} clothes={this.clothes} mode="ios" />
         <div id="video" class={linariaCss}></div>
       </Host>
     );

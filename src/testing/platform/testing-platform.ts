@@ -1,6 +1,6 @@
 import type * as d from '@stencil/core/internal';
 
-import { cstrs, hostRefs, moduleLoaded, styles } from './testing-constants';
+import { cstrs, moduleLoaded, styles } from './testing-constants';
 import { flushAll, resetTaskQueue } from './testing-task-queue';
 import { win } from './testing-window';
 
@@ -28,6 +28,7 @@ export const setPlatformHelpers = (helpers: {
 
 export const supportsListenerOptions = true;
 export const supportsConstructableStylesheets = false;
+export const supportsMutableAdoptedStyleSheets = false;
 
 /**
  * Helper function to programmatically set shadow DOM support in testing scenarios.
@@ -54,7 +55,6 @@ export function resetPlatform(defaults: Partial<d.PlatformRuntime> = {}) {
     win.close();
   }
 
-  hostRefs.clear();
   styles.clear();
   plt.$flags$ = 0;
   Object.assign(plt, defaults);
@@ -105,7 +105,7 @@ export async function startAutoApplyChanges(): Promise<void> {
  * @param Cstrs the component constructors to register
  */
 export const registerComponents = (Cstrs: d.ComponentTestingConstructor[]): void => {
-  Cstrs.forEach((Cstr) => {
+  Cstrs.filter((Cstr) => Cstr.COMPILER_META).forEach((Cstr) => {
     cstrs.set(Cstr.COMPILER_META.tagName, Cstr);
   });
 };

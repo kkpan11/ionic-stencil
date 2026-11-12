@@ -72,7 +72,7 @@ describe('Custom Elements output target', () => {
       });
 
       expect(entryPoint).toEqual(`import { globalScripts } from '${STENCIL_APP_GLOBALS_ID}';
-export { getAssetPath, setAssetPath, setNonce, setPlatformOptions } from '${STENCIL_INTERNAL_CLIENT_ID}';
+export { getAssetPath, setAssetPath, setNonce, setPlatformOptions, render } from '${STENCIL_INTERNAL_CLIENT_ID}';
 export * from '${USER_INDEX_ENTRY_ID}';
 
 globalScripts();
@@ -86,7 +86,7 @@ globalScripts();
       });
 
       expect(entryPoint)
-        .toEqual(`export { getAssetPath, setAssetPath, setNonce, setPlatformOptions } from '${STENCIL_INTERNAL_CLIENT_ID}';
+        .toEqual(`export { getAssetPath, setAssetPath, setNonce, setPlatformOptions, render } from '${STENCIL_INTERNAL_CLIENT_ID}';
 export * from '${USER_INDEX_ENTRY_ID}';
 `);
     });
@@ -123,7 +123,7 @@ export * from '${USER_INDEX_ENTRY_ID}';
   describe('bundleCustomElements', () => {
     it('should set a diagnostic if no `dir` prop on the output target', async () => {
       const { config, compilerCtx, buildCtx } = setup();
-      const outputTarget: OutputTargetDistCustomElements = { type: DIST_CUSTOM_ELEMENTS };
+      const outputTarget: OutputTargetDistCustomElements = { type: DIST_CUSTOM_ELEMENTS, externalRuntime: true };
       await bundleCustomElements(config, compilerCtx, buildCtx, outputTarget);
       expect(buildCtx.diagnostics).toEqual([
         {
@@ -164,7 +164,7 @@ export * from '${USER_INDEX_ENTRY_ID}';
         addCustomElementInputs(buildCtx, bundleOptions, config.outputTargets[0] as OutputTargetDistCustomElements);
         expect(bundleOptions.loader['\0core']).toEqual(
           `import { globalScripts } from '${STENCIL_APP_GLOBALS_ID}';
-export { getAssetPath, setAssetPath, setNonce, setPlatformOptions } from '${STENCIL_INTERNAL_CLIENT_ID}';
+export { getAssetPath, setAssetPath, setNonce, setPlatformOptions, render } from '${STENCIL_INTERNAL_CLIENT_ID}';
 export * from '${USER_INDEX_ENTRY_ID}';
 
 globalScripts();
@@ -197,7 +197,7 @@ globalScripts();
         addCustomElementInputs(buildCtx, bundleOptions, config.outputTargets[0] as OutputTargetDistCustomElements);
         expect(bundleOptions.loader['\0core']).toEqual(
           `import { globalScripts } from '${STENCIL_APP_GLOBALS_ID}';
-export { getAssetPath, setAssetPath, setNonce, setPlatformOptions } from '${STENCIL_INTERNAL_CLIENT_ID}';
+export { getAssetPath, setAssetPath, setNonce, setPlatformOptions, render } from '${STENCIL_INTERNAL_CLIENT_ID}';
 export * from '${USER_INDEX_ENTRY_ID}';
 export { StubCmp, defineCustomElement as defineCustomElementStubCmp } from '\0StubCmp';
 export { MyBestComponent, defineCustomElement as defineCustomElementMyBestComponent } from '\0MyBestComponent';
@@ -224,7 +224,7 @@ globalScripts();
         addCustomElementInputs(buildCtx, bundleOptions, config.outputTargets[0] as OutputTargetDistCustomElements);
         expect(bundleOptions.loader['\0core']).toEqual(
           `import { globalScripts } from '${STENCIL_APP_GLOBALS_ID}';
-export { getAssetPath, setAssetPath, setNonce, setPlatformOptions } from '${STENCIL_INTERNAL_CLIENT_ID}';
+export { getAssetPath, setAssetPath, setNonce, setPlatformOptions, render } from '${STENCIL_INTERNAL_CLIENT_ID}';
 export * from '${USER_INDEX_ENTRY_ID}';
 export { ComponentWithJsx, defineCustomElement as defineCustomElementComponentWithJsx } from '\0ComponentWithJsx';
 
@@ -257,9 +257,10 @@ globalScripts();
         addCustomElementInputs(buildCtx, bundleOptions, config.outputTargets[0] as OutputTargetDistCustomElements);
         expect(bundleOptions.loader['\0core']).toEqual(
           `import { globalScripts } from '${STENCIL_APP_GLOBALS_ID}';
+import { transformTag } from '@stencil/core/internal/client';
 import { StubCmp } from '\0StubCmp';
 import { MyBestComponent } from '\0MyBestComponent';
-export { getAssetPath, setAssetPath, setNonce, setPlatformOptions } from '${STENCIL_INTERNAL_CLIENT_ID}';
+export { getAssetPath, setAssetPath, setNonce, setPlatformOptions, render } from '${STENCIL_INTERNAL_CLIENT_ID}';
 export * from '${USER_INDEX_ENTRY_ID}';
 
 globalScripts();
@@ -269,14 +270,88 @@ export const defineCustomElements = (opts) => {
             StubCmp,
             MyBestComponent,
         ].forEach(cmp => {
-            if (!customElements.get(cmp.is)) {
-                customElements.define(cmp.is, cmp, opts);
+            if (!customElements.get(transformTag(cmp.is))) {
+                customElements.define(transformTag(cmp.is), cmp, opts);
             }
         });
     }
 };
 `,
         );
+      });
+    });
+
+    describe('autoLoader', () => {
+      it('should add a loader virtual module when autoLoader is true', () => {
+        const componentOne = stubComponentCompilerMeta();
+        const componentTwo = stubComponentCompilerMeta({
+          componentClassName: 'MyBestComponent',
+          tagName: 'my-best-component',
+        });
+
+        buildCtx.components = [componentOne, componentTwo];
+
+        const outputTarget = config.outputTargets[0] as OutputTargetDistCustomElements;
+        outputTarget.autoLoader = { fileName: 'loader', autoStart: true };
+
+        const bundleOptions = getBundleOptions(config, buildCtx, compilerCtx, outputTarget);
+        addCustomElementInputs(buildCtx, bundleOptions, outputTarget);
+
+        // Check loader input is added
+        expect(bundleOptions.inputs['loader']).toBe('\0loader');
+
+        // Check loader module content
+        const loaderContent = bundleOptions.loader['\0loader'];
+        expect(loaderContent).toContain(`import { transformTag } from '${STENCIL_INTERNAL_CLIENT_ID}'`);
+        expect(loaderContent).toContain("'stub-cmp': './stub-cmp.js'");
+        expect(loaderContent).toContain("'my-best-component': './my-best-component.js'");
+        expect(loaderContent).toContain('export function start(');
+        expect(loaderContent).toContain('export function stop(');
+        expect(loaderContent).toContain('start();'); // autoStart is true
+      });
+
+      it('should not auto-start when autoStart is false', () => {
+        const component = stubComponentCompilerMeta();
+        buildCtx.components = [component];
+
+        const outputTarget = config.outputTargets[0] as OutputTargetDistCustomElements;
+        outputTarget.autoLoader = { fileName: 'loader', autoStart: false };
+
+        const bundleOptions = getBundleOptions(config, buildCtx, compilerCtx, outputTarget);
+        addCustomElementInputs(buildCtx, bundleOptions, outputTarget);
+
+        const loaderContent = bundleOptions.loader['\0loader'];
+        // Should export start/stop but NOT auto-call start()
+        expect(loaderContent).toContain('export function start(');
+        expect(loaderContent).toContain('export function stop(');
+        expect(loaderContent).not.toMatch(/^start\(\);$/m);
+      });
+
+      it('should use custom fileName for loader', () => {
+        const component = stubComponentCompilerMeta();
+        buildCtx.components = [component];
+
+        const outputTarget = config.outputTargets[0] as OutputTargetDistCustomElements;
+        outputTarget.autoLoader = { fileName: 'my-custom-loader', autoStart: true };
+
+        const bundleOptions = getBundleOptions(config, buildCtx, compilerCtx, outputTarget);
+        addCustomElementInputs(buildCtx, bundleOptions, outputTarget);
+
+        expect(bundleOptions.inputs['my-custom-loader']).toBe('\0loader');
+      });
+
+      it('should not add loader when autoLoader is not set', () => {
+        const component = stubComponentCompilerMeta();
+        buildCtx.components = [component];
+
+        const outputTarget = config.outputTargets[0] as OutputTargetDistCustomElements;
+        // autoLoader is not set
+
+        const bundleOptions = getBundleOptions(config, buildCtx, compilerCtx, outputTarget);
+        addCustomElementInputs(buildCtx, bundleOptions, outputTarget);
+
+        expect(bundleOptions.inputs['loader']).toBeUndefined();
+        expect(bundleOptions.loader['\0loader']).toBeUndefined();
       });
     });
   });

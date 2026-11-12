@@ -1,9 +1,8 @@
-import { isString, join, normalizePath, resolve } from '@utils';
+import { isDtsFile, isJsFile, isJsxFile, isString, isTsFile, isTsxFile, join, normalizePath, resolve } from '@utils';
 import { basename, dirname } from 'path';
 import ts from 'typescript';
 
 import type * as d from '../../../declarations';
-import { isDtsFile, isJsFile, isJsxFile, isTsFile, isTsxFile } from '../resolve/resolve-utils';
 import { patchTsSystemFileSystem } from './typescript-sys';
 
 export const tsResolveModuleName = (
@@ -23,6 +22,16 @@ export const tsResolveModuleName = (
   }
 
   return null;
+};
+
+export const tsGetSourceFile = (config: d.ValidatedConfig, module: ts.ResolvedModuleWithFailedLookupLocations) => {
+  if (!module || !module.resolvedModule) {
+    return null;
+  }
+  const compilerOptions: ts.CompilerOptions = { ...config.tsCompilerOptions };
+  const host = ts.createCompilerHost(compilerOptions, true);
+  const program = ts.createProgram([module.resolvedModule.resolvedFileName], compilerOptions, host);
+  return program.getSourceFile(module.resolvedModule.resolvedFileName);
 };
 
 export const tsResolveModuleNamePackageJsonPath = (

@@ -1,8 +1,9 @@
 import { cloneAttributes } from './attribute';
+import { NODE_TYPES } from './constants';
 import { getStyleElementText, MockCSSStyleSheet, setStyleElementText } from './css-style-sheet';
 import { createCustomElement } from './custom-element-registry';
 import { MockDocumentFragment } from './document-fragment';
-import { MockElement, MockHTMLElement } from './node';
+import { MockElement, MockHTMLElement, MockNode } from './node';
 
 export function createElement(ownerDocument: any, tagName: string): any {
   if (typeof tagName !== 'string' || tagName === '' || !/^[a-z0-9-_:]+$/i.test(tagName)) {
@@ -32,6 +33,9 @@ export function createElement(ownerDocument: any, tagName: string): any {
     case 'input':
       return new MockInputElement(ownerDocument);
 
+    case 'label':
+      return new MockLabelElement(ownerDocument);
+
     case 'link':
       return new MockLinkElement(ownerDocument);
 
@@ -40,6 +44,12 @@ export function createElement(ownerDocument: any, tagName: string): any {
 
     case 'script':
       return new MockScriptElement(ownerDocument);
+
+    case 'slot':
+      return new MockSlotElement(ownerDocument);
+
+    case 'slot-fb':
+      return new MockHTMLElement(ownerDocument, tagName);
 
     case 'style':
       return new MockStyleElement(ownerDocument);
@@ -107,6 +117,9 @@ export class MockAnchorElement extends MockHTMLElement {
     this.setAttribute('href', value);
   }
   get pathname() {
+    if (!this.href) {
+      return '';
+    }
     return new URL(this.href).pathname;
   }
 }
@@ -114,6 +127,10 @@ export class MockAnchorElement extends MockHTMLElement {
 export class MockButtonElement extends MockHTMLElement {
   constructor(ownerDocument: any) {
     super(ownerDocument, 'button');
+  }
+
+  get labels() {
+    return getLabelsForElement(this);
   }
 }
 patchPropAttributes(
@@ -125,6 +142,12 @@ patchPropAttributes(
     type: 'submit',
   },
 );
+
+Object.defineProperty(MockButtonElement.prototype, 'form', {
+  get(this: MockElement) {
+    return this.hasAttribute('form') ? this.getAttribute('form') : null;
+  },
+});
 
 export class MockImageElement extends MockHTMLElement {
   constructor(ownerDocument: any) {
@@ -161,6 +184,10 @@ export class MockInputElement extends MockHTMLElement {
       return (this.ownerDocument as Document).getElementById(listId);
     }
     return null;
+  }
+
+  get labels() {
+    return getLabelsForElement(this);
   }
 }
 
@@ -212,6 +239,30 @@ export class MockFormElement extends MockHTMLElement {
 patchPropAttributes(MockFormElement.prototype, {
   name: String,
 });
+
+export class MockLabelElement extends MockHTMLElement {
+  constructor(ownerDocument: any) {
+    super(ownerDocument, 'label');
+  }
+
+  get htmlFor() {
+    return this.getAttributeNS(null, 'for') || '';
+  }
+  set htmlFor(value: string) {
+    this.setAttributeNS(null, 'for', value);
+  }
+
+  get control(): MockHTMLElement | null {
+    const forAttr = this.htmlFor;
+    if (forAttr) {
+      // Label references an element by ID via the "for" attribute
+      return this.ownerDocument?.getElementById(forAttr) ?? null;
+    }
+    // If no "for" attribute, look for the first labelable descendant
+    const labelableSelector = 'button, input:not([type="hidden"]), meter, output, progress, select, textarea';
+    return this.querySelector(labelableSelector);
+  }
+}
 
 export class MockLinkElement extends MockHTMLElement {
   constructor(ownerDocument: any) {
@@ -502,47 +553,144 @@ export class MockUListElement extends MockHTMLElement {
   }
 }
 
+export class MockSlotElement extends MockHTMLElement {
+  constructor(ownerDocument: any) {
+    super(ownerDocument, 'slot');
+  }
+
+  assignedNodes(opts?: { flatten: boolean }): (MockNode | Node)[] {
+    let nodesToReturn: (MockNode | Node)[] = [];
+
+    const ownerHost = (this.getRootNode() as any).host as MockElement;
+    if (!ownerHost) return nodesToReturn;
+
+    if (ownerHost.childNodes.length) {
+      // try to find lightDOM nodes matching this slot's name (or lack of)
+      if ((this as any).name) {
+        nodesToReturn = ownerHost.childNodes.filter(
+          (n) =>
+            n.nodeType === NODE_TYPES.ELEMENT_NODE && (n as MockElement).getAttribute('slot') === (this as any).name,
+        );
+      } else {
+        // find elements that do not have a slot attribute or
+        // any other type of node
+        nodesToReturn = ownerHost.childNodes.filter(
+          (n) =>
+            (n.nodeType === NODE_TYPES.ELEMENT_NODE && !(n as MockElement).getAttribute('slot')) ||
+            n.nodeType !== NODE_TYPES.ELEMENT_NODE,
+        );
+      }
+      if (nodesToReturn.length) return nodesToReturn;
+    }
+
+    // no flatten option? Return whatever's in this slot (without nested slots)
+    if (!opts?.flatten) return this.childNodes.filter((n) => !(n instanceof MockSlotElement));
+
+    // flatten option? Return all nodes in this slot (including anything within nested slots)
+    return this.childNodes.reduce(
+      (acc, node) => {
+        if (node instanceof MockSlotElement) {
+          acc.push(...node.assignedNodes(opts));
+        } else {
+          acc.push(node);
+        }
+        return acc;
+      },
+      [] as (MockNode | Node)[],
+    );
+  }
+
+  assignedElements(opts?: { flatten: boolean }): (Element | MockHTMLElement)[] {
+    let elesToReturn: (Element | MockHTMLElement)[] = [];
+
+    const ownerHost = (this.getRootNode() as any).host as MockElement;
+    if (!ownerHost) return elesToReturn;
+
+    if (ownerHost.children.length) {
+      // try to find lightDOM elements matching this slot's name (or lack of)
+      if ((this as any).name) {
+        elesToReturn = ownerHost.children.filter((n) => (n as MockElement).getAttribute('slot') == (this as any).name);
+      } else {
+        elesToReturn = ownerHost.children.filter((n) => !(n as MockElement).getAttribute('slot'));
+      }
+      if (elesToReturn.length) return elesToReturn;
+    }
+
+    // no flatten option? Return whatever elements are in this slot (without nested slots)
+    if (!opts?.flatten) return this.children.filter((n) => !(n instanceof MockSlotElement));
+
+    // flatten option? Return all elements in this slot (including anything within nested slots)
+    return this.children.reduce(
+      (acc, node) => {
+        if (node instanceof MockSlotElement) {
+          acc.push(...node.assignedElements(opts));
+        } else {
+          acc.push(node);
+        }
+        return acc;
+      },
+      [] as (MockElement | Element)[],
+    );
+  }
+}
+
+patchPropAttributes(MockSlotElement.prototype, {
+  name: String,
+});
+
+type CanvasContext = '2d' | 'webgl' | 'webgl2' | 'bitmaprenderer';
+export class CanvasRenderingContext {
+  context: CanvasContext;
+  contextAttributes: WebGLContextAttributes;
+  constructor(context: CanvasContext, contextAttributes?: WebGLContextAttributes) {
+    this.context = context;
+    this.contextAttributes = contextAttributes;
+  }
+  fillRect() {
+    return;
+  }
+  clearRect() {}
+  getImageData(_: number, __: number, w: number, h: number) {
+    return {
+      data: new Array(w * h * 4),
+    };
+  }
+  toDataURL() {
+    return 'data:,'; // blank image
+  }
+  putImageData() {}
+  createImageData(): ImageData {
+    return {} as ImageData;
+  }
+  setTransform() {}
+  drawImage() {}
+  save() {}
+  fillText() {}
+  restore() {}
+  beginPath() {}
+  moveTo() {}
+  lineTo() {}
+  closePath() {}
+  stroke() {}
+  translate() {}
+  scale() {}
+  rotate() {}
+  arc() {}
+  fill() {}
+  measureText() {
+    return { width: 0 };
+  }
+  transform() {}
+  rect() {}
+  clip() {}
+}
+
 export class MockCanvasElement extends MockHTMLElement {
   constructor(ownerDocument: any) {
     super(ownerDocument, 'canvas');
   }
-  getContext() {
-    return {
-      fillRect() {
-        return;
-      },
-      clearRect() {},
-      getImageData: function (_: number, __: number, w: number, h: number) {
-        return {
-          data: new Array(w * h * 4),
-        };
-      },
-      putImageData() {},
-      createImageData: function (): any[] {
-        return [];
-      },
-      setTransform() {},
-      drawImage() {},
-      save() {},
-      fillText() {},
-      restore() {},
-      beginPath() {},
-      moveTo() {},
-      lineTo() {},
-      closePath() {},
-      stroke() {},
-      translate() {},
-      scale() {},
-      rotate() {},
-      arc() {},
-      fill() {},
-      measureText() {
-        return { width: 0 };
-      },
-      transform() {},
-      rect() {},
-      clip() {},
-    };
+  getContext(context: CanvasContext, contextAttributes?: WebGLContextAttributes): CanvasRenderingContext {
+    return new CanvasRenderingContext(context, contextAttributes);
   }
 }
 
@@ -561,6 +709,36 @@ function fullUrl(elm: MockElement, attrName: string) {
     }
   }
   return val.replace(/\'|\"/g, '').trim();
+}
+
+function getLabelsForElement(elm: MockHTMLElement): MockHTMLElement[] {
+  const labels: MockHTMLElement[] = [];
+  const id = elm.id;
+  const doc = elm.ownerDocument;
+
+  if (doc) {
+    // Find labels with "for" attribute matching this element's ID
+    if (id) {
+      const allLabels = doc.getElementsByTagName('label');
+      for (let i = 0; i < allLabels.length; i++) {
+        const label = allLabels[i] as MockLabelElement;
+        if (label.htmlFor === id) {
+          labels.push(label);
+        }
+      }
+    }
+
+    // Find labels that contain this element as a descendant
+    let parent = elm.parentNode as MockHTMLElement | null;
+    while (parent) {
+      if (parent.nodeName === 'LABEL' && !labels.includes(parent)) {
+        labels.push(parent);
+      }
+      parent = parent.parentNode as MockHTMLElement | null;
+    }
+  }
+
+  return labels;
 }
 
 function patchPropAttributes(prototype: any, attrs: any, defaults: any = {}) {

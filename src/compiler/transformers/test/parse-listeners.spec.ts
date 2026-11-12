@@ -1,3 +1,5 @@
+import * as ts from 'typescript';
+
 import { transpileModule } from './transpile';
 
 describe('parse listeners', () => {
@@ -134,5 +136,128 @@ describe('parse listeners', () => {
         target: 'document',
       },
     ]);
+  });
+
+  it('should merge extended class listeners meta', async () => {
+    const t = transpileModule(
+      `
+      @Component({tag: 'cmp-a'})
+      class CmpA extends Parent {
+        @Listen('foo', {target: 'body'}) 
+        fooHandler() {}
+      }
+      class Parent extends GrandParent {
+        @Listen('foo') 
+        fooHandler() {}
+      }
+      class GrandParent {
+        @Listen('bar') 
+        barHandler() {}
+      }
+    `,
+      undefined,
+      undefined,
+      [],
+      [],
+      [],
+      { target: ts.ScriptTarget.ESNext },
+    );
+
+    expect(t.listeners).toEqual([
+      {
+        capture: false,
+        method: 'barHandler',
+        name: 'bar',
+        passive: false,
+        target: undefined,
+      },
+      {
+        capture: false,
+        method: 'fooHandler',
+        name: 'foo',
+        passive: false,
+        target: 'body',
+      },
+    ]);
+  });
+
+  describe('resolveVar', () => {
+    it('should resolve const variable in @Listen', () => {
+      const t = transpileModule(`
+        import { Component, Listen, resolveVar } from '@stencil/core';
+        
+        const MY_EVENT = 'myEvent';
+        
+        @Component({tag: 'cmp-a'})
+        export class CmpA {
+          @Listen(resolveVar(MY_EVENT))
+          onMyEvent(ev: UIEvent) {
+            console.log('myEvent!');
+          }
+        }
+      `);
+      expect(t.listeners).toEqual([
+        {
+          name: 'myEvent',
+          method: 'onMyEvent',
+          capture: false,
+          passive: false,
+          target: undefined,
+        },
+      ]);
+    });
+
+    it('should resolve const variable with as const in @Listen', () => {
+      const t = transpileModule(`
+        import { Component, Listen, resolveVar } from '@stencil/core';
+        
+        const MY_EVENT = 'myEvent' as const;
+        
+        @Component({tag: 'cmp-a'})
+        export class CmpA {
+          @Listen(resolveVar(MY_EVENT))
+          onMyEvent(ev: UIEvent) {
+            console.log('myEvent!');
+          }
+        }
+      `);
+      expect(t.listeners).toEqual([
+        {
+          name: 'myEvent',
+          method: 'onMyEvent',
+          capture: false,
+          passive: false,
+          target: undefined,
+        },
+      ]);
+    });
+
+    it('should resolve object property in @Listen', () => {
+      const t = transpileModule(`
+        import { Component, Listen, resolveVar } from '@stencil/core';
+        
+        const EVENTS = {
+          MY_EVENT: 'myEvent',
+          OTHER_EVENT: 'otherEvent'
+        } as const;
+        
+        @Component({tag: 'cmp-a'})
+        export class CmpA {
+          @Listen(resolveVar(EVENTS.MY_EVENT))
+          onMyEvent(ev: UIEvent) {
+            console.log('myEvent!');
+          }
+        }
+      `);
+      expect(t.listeners).toEqual([
+        {
+          name: 'myEvent',
+          method: 'onMyEvent',
+          capture: false,
+          passive: false,
+          target: undefined,
+        },
+      ]);
+    });
   });
 });
